@@ -67,8 +67,9 @@ export function SidebarNav({ collapsed, onToggle }: SidebarNavProps) {
               {hasServiceArea ? serviceArea.label : "Not set"}
             </h3>
             <p className="mt-2 text-xs leading-5 text-slate-500">
-              {state.vehicles.length} vehicle{state.vehicles.length === 1 ? "" : "s"}, {state.drivers.length} driver
-              {state.drivers.length === 1 ? "" : "s"}, tracker-001 online.
+              {state.vehicles.length} vehicle{state.vehicles.length === 1 ? "" : "s"},{" "}
+              {state.drivers.length} driver{state.drivers.length === 1 ? "" : "s"},{" "}
+              {state.trackerAssignmentVehicleId ? "tracker-001 assigned" : "tracker-001 available"}.
             </p>
           </>
         ) : (

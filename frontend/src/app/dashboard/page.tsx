@@ -39,6 +39,15 @@ function batteryPercent(mv?: number) {
   return `${Math.max(0, Math.min(100, percent))}%`;
 }
 
+function formatReceivedAt(iso: string | undefined) {
+  if (!iso) return "No packets yet";
+  const date = new Date(iso);
+  const diffMin = Math.floor((Date.now() - date.getTime()) / 60000);
+  if (diffMin < 1) return "Just now";
+  if (diffMin < 60) return `${diffMin} min ago`;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function formatProfileLabel(value: string) {
   return value
     .split("-")
@@ -164,7 +173,7 @@ export default function DashboardPage() {
 
           <div className="min-w-[170px] flex-1 rounded-md border border-brand-line bg-white px-4 py-3 shadow-sm">
             <p className="text-[11px] font-semibold uppercase text-slate-500">Last update</p>
-            <p className="mt-1 text-sm font-bold text-brand-ink">{liveTracker?.received_at ?? "No packets yet"}</p>
+            <p className="mt-1 text-sm font-bold text-brand-ink">{formatReceivedAt(liveTracker?.received_at)}</p>
             <p className="mt-1 text-xs text-slate-500">Most recent update</p>
           </div>
         </div>

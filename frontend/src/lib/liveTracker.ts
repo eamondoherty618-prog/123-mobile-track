@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Device } from "@/types";
 
-export const LIVE_TRACKER_ENDPOINT =
-  "https://theme-trailers-usd-ryan.trycloudflare.com/api/fleet/latest?device_id=tracker-001";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
+export const LIVE_TRACKER_ENDPOINT = `${API_BASE}/api/fleet/telemetry?device_id=tracker-001`;
 
 export type LiveTracker = {
   battery_mv?: number;
@@ -38,9 +38,9 @@ export function useLiveTracker() {
           throw new Error(`HTTP ${response.status}`);
         }
 
-        const payload = (await response.json()) as LiveTracker;
+        const body = (await response.json()) as { ok: boolean; device?: LiveTracker };
         if (!cancelled) {
-          setLiveTracker(payload);
+          setLiveTracker(body.device ?? null);
           setLiveError(null);
         }
       } catch (error) {

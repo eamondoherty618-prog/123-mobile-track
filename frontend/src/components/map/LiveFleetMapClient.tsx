@@ -3,8 +3,8 @@
 import "leaflet/dist/leaflet.css";
 
 import { divIcon } from "leaflet";
-import { Layers3, LocateFixed, Route } from "lucide-react";
-import { MapContainer, Marker, Polyline, TileLayer, Tooltip, ZoomControl } from "react-leaflet";
+import { Layers3, LocateFixed } from "lucide-react";
+import { MapContainer, Marker, TileLayer, Tooltip, ZoomControl } from "react-leaflet";
 
 import { useLiveTracker } from "@/lib/liveTracker";
 import { useWorkspace } from "@/lib/workspace";
@@ -61,7 +61,6 @@ export function LiveFleetMapClient({
           },
         ];
   const center = markers[0]?.point ?? serviceArea.center;
-  const path = markers.slice(0, 4).map((marker) => marker.point);
 
   return (
     <SectionCard className="overflow-hidden">
@@ -74,8 +73,8 @@ export function LiveFleetMapClient({
         </div>
         <div className="flex items-center gap-2 text-xs">
           <Badge>OpenStreetMap</Badge>
-          <Badge>Vehicle markers</Badge>
-          <Badge>Route history</Badge>
+          <Badge>Live markers</Badge>
+          {hasGps && <Badge>GPS active</Badge>}
         </div>
       </div>
 
@@ -92,8 +91,6 @@ export function LiveFleetMapClient({
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
-
-          {path.length > 1 && <Polyline positions={path} pathOptions={{ color: "#15803d", weight: 4, opacity: 0.65, dashArray: "10 8" }} />}
 
           {markers.map((vehicle) => (
             <Marker
@@ -127,10 +124,6 @@ export function LiveFleetMapClient({
             <span className="inline-flex items-center gap-1">
               <span className="h-2.5 w-2.5 rounded-full bg-brand-navy" />
               Vehicle
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <Route size={14} />
-              Route history
             </span>
             <span className="inline-flex items-center gap-1">
               <LocateFixed size={14} />
