@@ -1,0 +1,139 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
+
+export type TripEvent = {
+  type: "hard_brake" | "rapid_accel" | "speeding";
+  time: string;
+  lat: number;
+  lon: number;
+  speed_kph: number;
+};
+
+export type TripSummary = {
+  id: string;
+  device_id: string;
+  start_time: string;
+  end_time: string;
+  duration_s: number;
+  distance_km: number;
+  max_speed_kph: number;
+  avg_speed_kph: number;
+  point_count: number;
+  event_count: number;
+  events: TripEvent[];
+  start_lat: number;
+  start_lon: number;
+  end_lat: number;
+  end_lon: number;
+};
+
+export type RoutePoint = {
+  lat: number;
+  lon: number;
+  speed_kph: number;
+  time: string;
+  motion_state: string;
+};
+
+export type TripDetail = {
+  trip: TripSummary;
+  route: RoutePoint[];
+};
+
+export type FleetAlert = {
+  id: string;
+  device_id: string;
+  type: string;
+  title: string;
+  severity: "critical" | "warning" | "info";
+  time: string;
+  speed_kph: number;
+  lat: number | null;
+  lon: number | null;
+};
+
+export function useTrips(deviceId = "tracker-001") {
+  const [trips, setTrips] = useState<TripSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch(`${API_BASE}/api/fleet/trips?device_id=${deviceId}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { ok: boolean; trips: TripSummary[] };
+        if (!cancelled) {
+          setTrips(data.trips ?? []);
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load trips");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [deviceId]);
+
+  return { trips, loading, error };
+}
+
+export async function fetchTripDetail(tripId: string, deviceId = "tracker-001"): Promise<TripDetail> {
+  const res = await fetch(`${API_BASE}/api/fleet/trips/${tripId}?device_id=${deviceId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json() as { ok: boolean; trip: TripSummary; route: RoutePoint[] };
+  return { trip: data.trip, route: data.route };
+}
+
+export function useAlerts(deviceId = "tracker-001") {
+  const [alerts, setAlerts] = useState<FleetAlert[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch(`${API_BASE}/api/fleet/alerts?device_id=${deviceId}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { ok: boolean; alerts: FleetAlert[] };
+        if (!cancelled) {
+          setAlerts(data.alerts ?? []);
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load alerts");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    const iv = window.setInterval(load, 30000);
+    return () => { cancelled = true; window.clearInterval(iv); };
+  }, [deviceId]);
+
+  return { alerts, loading, error };
+}
+
+export function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+export function formatTime(iso: string): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+export function formatDate(iso: string): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
