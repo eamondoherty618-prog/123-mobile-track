@@ -37,30 +37,17 @@ export function LiveFleetMapClient({
 }) {
   const { state, serviceArea, hasServiceArea } = useWorkspace();
   const { liveTracker } = useLiveTracker();
+
   const hasGps = Boolean(liveTracker?.has_fix && liveTracker.gps?.lat && liveTracker.gps?.lon);
   const livePoint: [number, number] | null = hasGps
     ? [Number(liveTracker?.gps?.lat), Number(liveTracker?.gps?.lon)]
     : null;
-  const markers =
-    state.vehicles.length > 0
-      ? state.vehicles.map((vehicle) => ({
-          id: vehicle.id,
-          name: vehicle.name,
-          region: vehicle.region,
-          point:
-            vehicle.id === state.trackerAssignmentVehicleId && livePoint
-              ? livePoint
-              : ([vehicle.location.lat, vehicle.location.lng] as [number, number]),
-        }))
-      : [
-          {
-            id: "tracker-001",
-            name: "tracker-001",
-            region: hasServiceArea ? serviceArea.label : "Live tracker",
-            point: livePoint ?? serviceArea.center,
-          },
-        ];
-  const center = markers[0]?.point ?? serviceArea.center;
+
+  // Only show real devices — never fall back to workspace placeholder locations.
+  const markers = livePoint
+    ? [{ id: "tracker-001", name: "tracker-001", region: "Live GPS", point: livePoint }]
+    : [];
+  const center: [number, number] = livePoint ?? serviceArea.center;
 
   return (
     <SectionCard className="overflow-hidden">
@@ -114,7 +101,7 @@ export function LiveFleetMapClient({
         <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/70 bg-white/92 px-4 py-3 shadow-panel backdrop-blur">
           <div className="flex items-center gap-2 text-sm text-brand-text">
             <Layers3 size={16} className="text-brand-navy" />
-            {state.vehicles.length > 0 ? "Fleet view" : hasServiceArea ? "Service area view" : "Tracker view"}
+            {hasGps ? "Live tracker" : "Waiting for GPS fix"}
           </div>
           <div className="flex items-center gap-3 text-xs text-slate-500">
             <span className="inline-flex items-center gap-1">
