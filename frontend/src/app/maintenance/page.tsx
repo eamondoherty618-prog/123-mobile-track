@@ -14,7 +14,7 @@ import {
   Wind,
   Wrench,
 } from "lucide-react";
-import { useState } from "react";
+import { ElementType, useState } from "react";
 
 import { SectionCard } from "@/components/ui/SectionCard";
 import { Button } from "@/components/ui/Button";
@@ -26,7 +26,7 @@ import { MaintenanceItem, MaintenanceType, Vehicle } from "@/types";
 
 const TYPE_META: Record<
   MaintenanceType,
-  { label: string; icon: React.ElementType; intervalMiles: number; intervalMonths: number }
+  { label: string; icon: ElementType; intervalMiles: number; intervalMonths: number }
 > = {
   oil_change:    { label: "Oil Change",       icon: Gauge,          intervalMiles: 3000,  intervalMonths: 6  },
   tire_rotation: { label: "Tire Rotation",    icon: Settings2,      intervalMiles: 5000,  intervalMonths: 6  },

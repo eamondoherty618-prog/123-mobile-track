@@ -1,7 +1,7 @@
 "use client";
 
 import { Camera, X } from "lucide-react";
-import { useState } from "react";
+import { ChangeEvent, useState } from "react";
 
 import { featureCatalog } from "@/data/mockData";
 import { useWorkspace } from "@/lib/workspace";
@@ -76,7 +76,7 @@ export function AddVehicleModal({
     );
   }
 
-  async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handlePhotoChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     try {

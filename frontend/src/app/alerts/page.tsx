@@ -1,13 +1,13 @@
 "use client";
 
 import { BellRing, AlertTriangle, Zap, Gauge } from "lucide-react";
-import { useMemo } from "react";
+import { ReactNode, useMemo } from "react";
 
 import { SectionCard } from "@/components/ui/SectionCard";
 import { formatDate, formatTime, kphToMph, useAllAlerts, type FleetAlert } from "@/lib/fleetHistory";
 import { useWorkspace } from "@/lib/workspace";
 
-const TYPE_META: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+const TYPE_META: Record<string, { label: string; icon: ReactNode; color: string }> = {
   hard_brake: {
     label: "Hard brake",
     icon: <AlertTriangle size={14} />,

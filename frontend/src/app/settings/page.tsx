@@ -1,7 +1,7 @@
 "use client";
 
 import { Mail, SlidersHorizontal, Trash2, UserPlus, Users } from "lucide-react";
-import { useState } from "react";
+import { ReactNode, useState } from "react";
 
 import { SetupWorkspaceModal } from "@/components/forms/SetupWorkspaceModal";
 import { Button } from "@/components/ui/Button";
@@ -78,7 +78,7 @@ export default function SettingsPage() {
   });
   const [trackingSaved, setTrackingSaved] = useState(false);
 
-  const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  const tabs: { id: Tab; label: string; icon: ReactNode }[] = [
     { id: "company", label: "Company", icon: <SlidersHorizontal size={15} /> },
     { id: "admins", label: "Admins", icon: <Users size={15} /> },
     { id: "tracking", label: "Tracking", icon: <Mail size={15} /> },
