@@ -5,7 +5,6 @@ import {
   FleetAlert,
   Geofence,
   KPIStat,
-  MaintenanceRecord,
   Trip,
   Vehicle,
 } from "@/types";
@@ -42,8 +41,6 @@ export const trips: Trip[] = [];
 export const alerts: FleetAlert[] = [];
 
 export const geofences: Geofence[] = [];
-
-export const maintenanceRecords: MaintenanceRecord[] = [];
 
 export const featureModules: FeatureModule[] = [
   {
