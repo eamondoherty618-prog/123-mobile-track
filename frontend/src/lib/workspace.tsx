@@ -2,7 +2,7 @@
 
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
 
-import { Driver, Vehicle } from "@/types";
+import { Driver, MaintenanceItem, Vehicle } from "@/types";
 
 type DateRangeOption = "Today" | "Last 7 days" | "Last 30 days" | "This month";
 
@@ -41,6 +41,7 @@ type WorkspaceState = {
   trackerAssignmentVehicleId: string | null;
   admins: Admin[];
   trackingProfile: TrackingProfile;
+  maintenanceItems: MaintenanceItem[];
 };
 
 type WorkspaceContextValue = {
@@ -75,6 +76,9 @@ type WorkspaceContextValue = {
   removeAdmin: (adminId: string) => void;
   updateAdminAlerts: (adminId: string, alertTypes: string[]) => void;
   updateTrackingProfile: (profile: Partial<TrackingProfile>) => void;
+  addMaintenanceItem: (item: Omit<MaintenanceItem, "id">) => void;
+  updateMaintenanceItem: (id: string, updates: Partial<Omit<MaintenanceItem, "id">>) => void;
+  removeMaintenanceItem: (id: string) => void;
 };
 
 const STORAGE_KEY = "mobile-track-workspace";
@@ -121,6 +125,7 @@ const defaultState: WorkspaceState = {
     },
   ],
   trackingProfile: defaultTrackingProfile,
+  maintenanceItems: [],
 };
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -162,26 +167,42 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const hasServiceArea = Boolean(state.serviceAreaId);
 
   const notifications = useMemo(() => {
-    const items = [
-      !state.setupComplete && {
+    const items: { id: string; title: string; detail: string }[] = [];
+
+    if (!state.setupComplete) {
+      items.push({
         id: "setup",
         title: "Finish company setup",
         detail: "Add your company name, service area, and contact details.",
-      },
-      state.vehicles.length === 0 && {
+      });
+    }
+    if (state.vehicles.length === 0) {
+      items.push({
         id: "vehicle",
         title: "Add your first vehicle",
         detail: "Assign a tracker to a vehicle so trips, alerts, and history all stay organized.",
-      },
-      state.drivers.length === 0 && {
-        id: "driver",
-        title: "Drivers are still optional",
-        detail: "You can add drivers now or leave this for later once the first install is mounted.",
-      },
-    ].filter(Boolean);
+      });
+    }
 
-    return items as { id: string; title: string; detail: string }[];
-  }, [state.drivers.length, state.setupComplete, state.vehicles.length]);
+    // Maintenance due alerts (time-based check)
+    const now = Date.now();
+    for (const item of state.maintenanceItems) {
+      if (!item.alertEnabled || item.intervalMonths === 0) continue;
+      const monthsSince =
+        (now - new Date(item.lastServiceDate).getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+      if (monthsSince >= item.intervalMonths) {
+        const vehicle = state.vehicles.find((v) => v.id === item.vehicleId);
+        const vName = vehicle?.name ?? "Vehicle";
+        items.push({
+          id: `maint-${item.id}`,
+          title: `${vName} — ${item.label} due`,
+          detail: `Last service was ${Math.floor(monthsSince)} month${Math.floor(monthsSince) !== 1 ? "s" : ""} ago. Interval: every ${item.intervalMonths} months.`,
+        });
+      }
+    }
+
+    return items;
+  }, [state.drivers.length, state.maintenanceItems, state.setupComplete, state.vehicles]);
 
   const value = useMemo<WorkspaceContextValue>(
     () => ({
@@ -304,6 +325,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setState((current) => ({
           ...current,
           trackingProfile: { ...(current.trackingProfile ?? defaultTrackingProfile), ...profile },
+        })),
+      addMaintenanceItem: (item) =>
+        setState((current) => ({
+          ...current,
+          maintenanceItems: [
+            ...current.maintenanceItems,
+            { ...item, id: `maint-${Date.now()}` },
+          ],
+        })),
+      updateMaintenanceItem: (id, updates) =>
+        setState((current) => ({
+          ...current,
+          maintenanceItems: current.maintenanceItems.map((m) =>
+            m.id === id ? { ...m, ...updates } : m,
+          ),
+        })),
+      removeMaintenanceItem: (id) =>
+        setState((current) => ({
+          ...current,
+          maintenanceItems: current.maintenanceItems.filter((m) => m.id !== id),
         })),
     }),
     [hasServiceArea, notifications, serviceArea, state],

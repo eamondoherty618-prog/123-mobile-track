@@ -187,6 +187,36 @@ export function useAllTrips(deviceIds: string[]) {
   return { trips, loading, error };
 }
 
+/** Sum GPS miles driven for a device since a given ISO date. */
+export function useTripMilesSince(
+  deviceId: string | undefined,
+  sinceDate: string | undefined,
+): { miles: number; loading: boolean } {
+  const [miles, setMiles] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!deviceId || !sinceDate) { setMiles(0); return; }
+    let cancelled = false;
+    setLoading(true);
+    const since = new Date(sinceDate).getTime();
+    fetch(`${API_BASE}/api/fleet/trips?device_id=${deviceId}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data: { ok: boolean; trips: TripSummary[] }) => {
+        if (cancelled) return;
+        const total = (data.trips ?? [])
+          .filter((t) => new Date(t.start_time).getTime() >= since)
+          .reduce((sum, t) => sum + kmToMiles(t.distance_km), 0);
+        setMiles(Math.round(total));
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [deviceId, sinceDate]);
+
+  return { miles, loading };
+}
+
 export function useAllAlerts(deviceIds: string[]) {
   const [alerts, setAlerts] = useState<FleetAlert[]>([]);
   const [loading, setLoading] = useState(true);

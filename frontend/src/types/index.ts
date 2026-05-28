@@ -99,14 +99,24 @@ export interface Geofence {
   rule: string;
 }
 
-export interface MaintenanceRecord {
+export type MaintenanceType =
+  | "oil_change"
+  | "tire_rotation"
+  | "brakes"
+  | "air_filter"
+  | "battery"
+  | "custom";
+
+export interface MaintenanceItem {
   id: string;
-  vehicle: string;
-  service: string;
-  dueMileage: string;
-  dueDate: string;
-  status: "scheduled" | "due-soon" | "overdue";
+  vehicleId: string;
+  type: MaintenanceType;
+  label: string;
+  lastServiceDate: string;   // ISO date when last serviced
+  intervalMiles: number;     // 0 = miles-based interval disabled
+  intervalMonths: number;    // 0 = time-based interval disabled
   notes: string;
+  alertEnabled: boolean;
 }
 
 export interface FeatureModule {

@@ -8,6 +8,7 @@ import { MapContainer, Marker, TileLayer, Tooltip, ZoomControl, useMap } from "r
 
 import { useAllTrackers } from "@/lib/liveTracker";
 import { useWorkspace } from "@/lib/workspace";
+import { MaintenanceItem } from "@/types";
 
 import { SectionCard } from "../ui/SectionCard";
 
@@ -27,23 +28,42 @@ function FitBoundsOnce({ points }: { points: [number, number][] }) {
   return null;
 }
 
-function dotIcon(color: string, size = 16) {
+function maintDueBadge(due: boolean): string {
+  if (!due) return "";
+  return `<div style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#f97316;border:2px solid white;display:flex;align-items:center;justify-content:center;font-size:8px;line-height:1">⚙</div>`;
+}
+
+function dotIcon(color: string, size = 16, maintDue = false) {
   const half = size / 2;
+  const outer = size + 8;
   return divIcon({
     className: "",
-    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.25)"></div>`,
-    iconSize: [size, size],
-    iconAnchor: [half, half],
+    html: `<div style="position:relative;width:${outer}px;height:${outer}px"><div style="position:absolute;top:4px;left:4px;width:${size}px;height:${size}px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.25)"></div>${maintDueBadge(maintDue)}</div>`,
+    iconSize: [outer, outer],
+    iconAnchor: [outer / 2, outer / 2],
   });
 }
 
-function photoIcon(photo: string, color: string, size = 40) {
+function photoIcon(photo: string, color: string, size = 40, maintDue = false) {
   const half = size / 2;
+  const outer = size + 8;
   return divIcon({
     className: "",
-    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;border:3px solid ${color};box-shadow:0 2px 10px rgba(0,0,0,0.3)"><img src="${photo}" style="width:100%;height:100%;object-fit:cover"/></div>`,
-    iconSize: [size, size],
-    iconAnchor: [half, half],
+    html: `<div style="position:relative;width:${outer}px;height:${outer}px"><div style="position:absolute;top:4px;left:4px;width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;border:3px solid ${color};box-shadow:0 2px 10px rgba(0,0,0,0.3)"><img src="${photo}" style="width:100%;height:100%;object-fit:cover"/></div>${maintDueBadge(maintDue)}</div>`,
+    iconSize: [outer, outer],
+    iconAnchor: [outer / 2, outer / 2],
+  });
+}
+
+function isMaintenanceDue(items: MaintenanceItem[]): boolean {
+  const now = Date.now();
+  return items.some((item) => {
+    if (!item.alertEnabled) return false;
+    if (item.intervalMonths > 0) {
+      const mo = (now - new Date(item.lastServiceDate).getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+      if (mo >= item.intervalMonths * 0.85) return true;
+    }
+    return false;
   });
 }
 
@@ -70,6 +90,9 @@ export function LiveFleetMapClient({
       const speedMph = Math.round(Number(t.gps?.speed_kph ?? 0) * 0.621371);
       const selected =
         selectedVehicleId === vehicle?.id || selectedVehicleId === t.device_id;
+      const maintItems = vehicle
+        ? state.maintenanceItems.filter((m) => m.vehicleId === vehicle.id)
+        : [];
       return {
         id: t.device_id,
         vehicleId: vehicle?.id,
@@ -78,6 +101,7 @@ export function LiveFleetMapClient({
         point: [Number(t.gps!.lat), Number(t.gps!.lon)] as [number, number],
         speedMph,
         selected,
+        maintDue: isMaintenanceDue(maintItems),
       };
     });
 
@@ -126,8 +150,8 @@ export function LiveFleetMapClient({
               position={m.point}
               icon={
                 m.photo
-                  ? photoIcon(m.photo, m.selected ? "#15803d" : "#173754")
-                  : dotIcon(m.selected ? "#15803d" : "#173754")
+                  ? photoIcon(m.photo, m.selected ? "#15803d" : "#173754", 40, m.maintDue)
+                  : dotIcon(m.selected ? "#15803d" : "#173754", 16, m.maintDue)
               }
               eventHandlers={{
                 click: () => onSelectVehicle?.(m.vehicleId ?? m.id),
