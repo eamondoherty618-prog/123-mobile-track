@@ -14,6 +14,13 @@ function json(body: unknown, status = 200) {
   });
 }
 
+function isAuthorized(req: Request): boolean {
+  const expected = process.env.TRACKER_API_KEY;
+  if (!expected) return true; // key not configured yet — allow all (backwards compat)
+  const header = req.headers.get("x-tracker-key");
+  return header === expected;
+}
+
 async function saveTelemetry(payload: TelemetryPayload, context: Context) {
   const { getStore } = await import("@netlify/blobs");
   const store = getStore({ name: "fleet-telemetry", consistency: "strong" });
@@ -38,6 +45,9 @@ async function saveTelemetry(payload: TelemetryPayload, context: Context) {
 
 export default async (req: Request, context: Context) => {
   if (req.method === "POST") {
+    if (!isAuthorized(req)) {
+      return json({ ok: false, error: "unauthorized" }, 401);
+    }
     try {
       const payload = (await req.json()) as TelemetryPayload;
       return await saveTelemetry(payload, context);
