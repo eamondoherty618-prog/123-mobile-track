@@ -1,4 +1,4 @@
-const CACHE_NAME = "mobile-track-shell-v1";
+const CACHE_NAME = "mobile-track-shell-v2";
 const APP_SHELL = [
   "/",
   "/dashboard",
@@ -33,16 +33,37 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then((response) => {
+  const url = new URL(event.request.url);
+
+  // Never cache API responses — always go to network.
+  if (url.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  // Cache-first for hashed static assets (content hash in filename = safe to cache forever).
+  if (url.pathname.startsWith("/_next/static/")) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(event.request).then((response) => {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone)).catch(() => undefined);
           return response;
-        })
-        .catch(() => caches.match("/dashboard"));
-    }),
+        });
+      }),
+    );
+    return;
+  }
+
+  // Network-first for HTML pages — get fresh content, fall back to cache offline.
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone)).catch(() => undefined);
+        return response;
+      })
+      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/dashboard"))),
   );
 });

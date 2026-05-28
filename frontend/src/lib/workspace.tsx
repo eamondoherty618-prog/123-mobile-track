@@ -6,6 +6,22 @@ import { Driver, Vehicle } from "@/types";
 
 type DateRangeOption = "Today" | "Last 7 days" | "Last 30 days" | "This month";
 
+export type Admin = {
+  id: string;
+  name: string;
+  email: string;
+  alertTypes: string[];
+  isPrimary?: boolean;
+};
+
+export type TrackingProfile = {
+  movingIntervalS: number;
+  stoppedIntervalS: number;
+  idleTimeoutMin: number;
+  deepSleepTimeoutMin: number;
+  heartbeatIntervalMin: number;
+};
+
 export type ServiceAreaOption = {
   id: string;
   label: string;
@@ -23,6 +39,8 @@ type WorkspaceState = {
   vehicles: Vehicle[];
   drivers: Driver[];
   trackerAssignmentVehicleId: string | null;
+  admins: Admin[];
+  trackingProfile: TrackingProfile;
 };
 
 type WorkspaceContextValue = {
@@ -49,9 +67,14 @@ type WorkspaceContextValue = {
     notes: string;
     installDate: string;
     enabledFeatures: string[];
+    photo?: string;
   }) => void;
   addDriver: (payload: { name: string; phone: string; license: string; notes: string }) => void;
-  assignTrackerToVehicle: (vehicleId: string) => void;
+  assignTrackerToVehicle: (vehicleId: string, trackerId: string) => void;
+  addAdmin: (payload: { name: string; email: string; alertTypes: string[] }) => void;
+  removeAdmin: (adminId: string) => void;
+  updateAdminAlerts: (adminId: string, alertTypes: string[]) => void;
+  updateTrackingProfile: (profile: Partial<TrackingProfile>) => void;
 };
 
 const STORAGE_KEY = "mobile-track-workspace";
@@ -69,6 +92,14 @@ export const serviceAreaOptions: ServiceAreaOption[] = [
   { id: "nyc-metro", label: "NYC Metro", center: [40.7128, -74.006] },
 ];
 
+const defaultTrackingProfile: TrackingProfile = {
+  movingIntervalS: 10,
+  stoppedIntervalS: 60,
+  idleTimeoutMin: 5,
+  deepSleepTimeoutMin: 15,
+  heartbeatIntervalMin: 30,
+};
+
 const defaultState: WorkspaceState = {
   companyName: "123 Mobile Track",
   serviceAreaId: "",
@@ -80,6 +111,16 @@ const defaultState: WorkspaceState = {
   vehicles: [],
   drivers: [],
   trackerAssignmentVehicleId: null,
+  admins: [
+    {
+      id: "admin-primary",
+      name: "Eamon Doherty",
+      email: "ops@123mobiletrack.com",
+      alertTypes: ["hard_brake", "rapid_accel", "speeding", "gps_offline"],
+      isPrimary: true,
+    },
+  ],
+  trackingProfile: defaultTrackingProfile,
 };
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -130,7 +171,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       state.vehicles.length === 0 && {
         id: "vehicle",
         title: "Add your first vehicle",
-        detail: "Assign tracker-001 to a vehicle so trips, alerts, and maintenance can start cleanly.",
+        detail: "Assign a tracker to a vehicle so trips, alerts, and history all stay organized.",
       },
       state.drivers.length === 0 && {
         id: "driver",
@@ -186,6 +227,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             notes: payload.notes || "Ready to be assigned and installed.",
             installDate: payload.installDate || "Install date not set",
             hardwareType: "ESP32 + SIM Tracker",
+            photo: payload.photo,
             deviceAssignment:
               current.vehicles.length === 0 && !current.trackerAssignmentVehicleId ? "tracker-001" : "Not assigned",
             location: { lat: location[0], lng: location[1], label: payload.name },
@@ -216,17 +258,52 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             },
           ],
         })),
-      assignTrackerToVehicle: (vehicleId) =>
+      assignTrackerToVehicle: (vehicleId, trackerId) =>
         setState((current) => ({
           ...current,
           trackerAssignmentVehicleId: vehicleId,
           vehicles: current.vehicles.map((vehicle) => ({
             ...vehicle,
-            deviceAssignment: vehicle.id === vehicleId ? "tracker-001" : vehicle.deviceAssignment,
-            gpsOnline: vehicle.id === vehicleId,
+            deviceAssignment:
+              vehicle.id === vehicleId
+                ? trackerId
+                : vehicle.deviceAssignment === trackerId
+                ? "Not assigned"
+                : vehicle.deviceAssignment,
+            gpsOnline: vehicle.id === vehicleId ? true : vehicle.gpsOnline,
             deviceStatus: vehicle.id === vehicleId ? "online" : vehicle.deviceStatus,
             lastSeen: vehicle.id === vehicleId ? "Connected now" : vehicle.lastSeen,
           })),
+        })),
+      addAdmin: (payload) =>
+        setState((current) => ({
+          ...current,
+          admins: [
+            ...current.admins,
+            {
+              id: `admin-${Date.now()}`,
+              name: payload.name || payload.email,
+              email: payload.email,
+              alertTypes: payload.alertTypes,
+            },
+          ],
+        })),
+      removeAdmin: (adminId) =>
+        setState((current) => ({
+          ...current,
+          admins: current.admins.filter((a) => a.id !== adminId),
+        })),
+      updateAdminAlerts: (adminId, alertTypes) =>
+        setState((current) => ({
+          ...current,
+          admins: current.admins.map((a) =>
+            a.id === adminId ? { ...a, alertTypes } : a,
+          ),
+        })),
+      updateTrackingProfile: (profile) =>
+        setState((current) => ({
+          ...current,
+          trackingProfile: { ...(current.trackingProfile ?? defaultTrackingProfile), ...profile },
         })),
     }),
     [hasServiceArea, notifications, serviceArea, state],

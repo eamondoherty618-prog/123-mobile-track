@@ -34,6 +34,7 @@ export interface Vehicle {
   hardwareType: string;
   deviceAssignment: string;
   location: LocationPoint;
+  photo?: string;
 }
 
 export interface Device {

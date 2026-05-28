@@ -1,14 +1,62 @@
 "use client";
 
+import { Camera, X } from "lucide-react";
 import { useState } from "react";
-import { X } from "lucide-react";
 
 import { featureCatalog } from "@/data/mockData";
 import { useWorkspace } from "@/lib/workspace";
 
 import { Button } from "../ui/Button";
 
-const vehicleTypes = ["Van", "Service Truck", "Car", "SUV", "Tow Truck", "Motorcycle", "Trailer", "Other"];
+const vehicleTypes = [
+  "Van",
+  "Pickup Truck",
+  "Box Truck",
+  "Service Truck",
+  "Tow Truck",
+  "Car",
+  "SUV",
+  "Motorcycle",
+  "Trailer",
+  "Other",
+];
+
+async function resizeImage(file: File, maxDim = 220): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { reject(new Error("canvas unavailable")); return; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      };
+      img.onerror = reject;
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+const defaultForm = {
+  name: "",
+  vehicleNumber: "",
+  plate: "",
+  make: "",
+  model: "",
+  year: "2026",
+  type: vehicleTypes[0],
+  notes: "",
+  installDate: "",
+};
+
+const defaultFeatures = ["GPS Tracking", "Live Location", "Motion Wake", "Smart Sleep Mode"];
 
 export function AddVehicleModal({
   open,
@@ -18,23 +66,9 @@ export function AddVehicleModal({
   onClose: () => void;
 }) {
   const { addVehicle, serviceArea, hasServiceArea } = useWorkspace();
-  const [form, setForm] = useState({
-    name: "",
-    vehicleNumber: "",
-    plate: "",
-    make: "",
-    model: "",
-    year: "2026",
-    type: vehicleTypes[0],
-    notes: "",
-    installDate: "",
-  });
-  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([
-    "GPS Tracking",
-    "Live Location",
-    "Motion Wake",
-    "Smart Sleep Mode",
-  ]);
+  const [form, setForm] = useState(defaultForm);
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>(defaultFeatures);
 
   function toggleFeature(feature: string) {
     setSelectedFeatures((current) =>
@@ -42,9 +76,41 @@ export function AddVehicleModal({
     );
   }
 
+  async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const resized = await resizeImage(file);
+      setPhoto(resized);
+    } catch {
+      // ignore — photo is optional
+    }
+    e.target.value = "";
+  }
+
   if (!open) return null;
 
   const canSubmit = form.name.trim().length > 0;
+
+  function handleSubmit() {
+    addVehicle({
+      name: form.name,
+      vehicleNumber: form.vehicleNumber || "01",
+      plate: form.plate || "Plate not added",
+      make: form.make || "Make not added",
+      model: form.model || "Model not added",
+      year: Number(form.year) || new Date().getFullYear(),
+      type: form.type,
+      notes: form.notes,
+      installDate: form.installDate,
+      enabledFeatures: selectedFeatures,
+      photo: photo ?? undefined,
+    });
+    onClose();
+    setForm(defaultForm);
+    setPhoto(null);
+    setSelectedFeatures(defaultFeatures);
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-brand-ink/45 px-4">
@@ -60,14 +126,55 @@ export function AddVehicleModal({
         </div>
 
         <div className="grid gap-4 p-6 md:grid-cols-2">
-          {[
-            ["Vehicle name", "name"],
-            ["Vehicle number", "vehicleNumber"],
-            ["Plate number", "plate"],
-            ["Make", "make"],
-            ["Model", "model"],
-            ["Year", "year"],
-          ].map(([label, key]) => (
+          {/* Photo upload */}
+          <div className="md:col-span-2">
+            <p className="text-sm font-medium text-brand-text">Vehicle photo (optional)</p>
+            <div className="mt-2 flex items-center gap-4">
+              <div className="h-16 w-16 shrink-0 overflow-hidden rounded-full border border-brand-line bg-brand-cloud flex items-center justify-center">
+                {photo ? (
+                  <img src={photo} alt="Preview" className="h-full w-full object-cover" />
+                ) : (
+                  <Camera size={20} className="text-slate-400" />
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="vehicle-photo-input"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePhotoChange}
+                />
+                <label
+                  htmlFor="vehicle-photo-input"
+                  className="cursor-pointer inline-flex h-9 items-center rounded-md border border-brand-line bg-white px-3 text-sm font-medium text-brand-text hover:bg-brand-cloud"
+                >
+                  {photo ? "Change photo" : "Upload photo"}
+                </label>
+                {photo && (
+                  <button
+                    type="button"
+                    onClick={() => setPhoto(null)}
+                    className="text-sm text-slate-400 hover:text-red-500"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Text fields */}
+          {(
+            [
+              ["Vehicle name", "name"],
+              ["Vehicle number", "vehicleNumber"],
+              ["Plate number", "plate"],
+              ["Make", "make"],
+              ["Model", "model"],
+              ["Year", "year"],
+            ] as [string, string][]
+          ).map(([label, key]) => (
             <label key={label} className="text-sm font-medium text-brand-text">
               {label}
               <input
@@ -139,9 +246,6 @@ export function AddVehicleModal({
                 </label>
               ))}
             </div>
-            <p className="mt-3 text-xs text-slate-500">
-              These features are saved with the vehicle profile and can be refined later.
-            </p>
           </div>
         </div>
 
@@ -149,40 +253,13 @@ export function AddVehicleModal({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            disabled={!canSubmit}
-            onClick={() => {
-              addVehicle({
-                name: form.name,
-                vehicleNumber: form.vehicleNumber || "01",
-                plate: form.plate || "Plate not added",
-                make: form.make || "Make not added",
-                model: form.model || "Model not added",
-                year: Number(form.year) || new Date().getFullYear(),
-                type: form.type,
-                notes: form.notes,
-                installDate: form.installDate,
-                enabledFeatures: selectedFeatures,
-              });
-              onClose();
-              setForm({
-                name: "",
-                vehicleNumber: "",
-                plate: "",
-                make: "",
-                model: "",
-                year: "2026",
-                type: vehicleTypes[0],
-                notes: "",
-                installDate: "",
-              });
-              setSelectedFeatures(["GPS Tracking", "Live Location", "Motion Wake", "Smart Sleep Mode"]);
-            }}
-          >
+          <Button disabled={!canSubmit} onClick={handleSubmit}>
             Create Vehicle
           </Button>
         </div>
-        {!canSubmit && <p className="px-6 pb-5 text-sm text-slate-500">Add a vehicle name to create the record.</p>}
+        {!canSubmit && (
+          <p className="px-6 pb-5 text-sm text-slate-500">Enter a vehicle name to create the record.</p>
+        )}
       </div>
     </div>
   );

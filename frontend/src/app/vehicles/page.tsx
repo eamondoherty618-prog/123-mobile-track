@@ -1,6 +1,6 @@
 "use client";
 
-import { CarFront, Cpu } from "lucide-react";
+import { CarFront } from "lucide-react";
 import { useState } from "react";
 
 import { AddVehicleModal } from "@/components/forms/AddVehicleModal";
@@ -24,36 +24,6 @@ export default function VehiclesPage() {
         </p>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <SectionCard className="p-5">
-          <div className="flex items-start gap-3">
-            <div className="rounded-md bg-brand-mint p-3 text-brand-forest">
-              <Cpu size={18} />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-brand-ink">Available tracker</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                tracker-001 is online and ready to be linked to a vehicle.
-              </p>
-            </div>
-          </div>
-        </SectionCard>
-        <SectionCard className="p-5">
-          <div className="flex items-start gap-3">
-            <div className="rounded-md bg-brand-cloud p-3 text-brand-navy">
-              <CarFront size={18} />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-brand-ink">Next step</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Create the vehicle you want this tracker installed in, then we can tie trips, alerts, and history to
-                the right unit.
-              </p>
-            </div>
-          </div>
-        </SectionCard>
-      </div>
-
       {state.vehicles.length === 0 ? (
         <EmptyState
           title="No vehicles yet"
@@ -67,7 +37,9 @@ export default function VehiclesPage() {
           <div className="flex items-center justify-between border-b border-brand-line px-5 py-4">
             <div>
               <h2 className="text-base font-semibold text-brand-ink">Vehicle list</h2>
-              <p className="text-sm text-slate-500">Vehicles in this account</p>
+              <p className="text-sm text-slate-500">
+                {state.vehicles.length} vehicle{state.vehicles.length !== 1 ? "s" : ""} in this account
+              </p>
             </div>
             <Button onClick={() => setModalOpen(true)}>Add Vehicle</Button>
           </div>

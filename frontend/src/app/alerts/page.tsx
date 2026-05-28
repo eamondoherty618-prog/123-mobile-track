@@ -1,9 +1,11 @@
 "use client";
 
 import { BellRing, AlertTriangle, Zap, Gauge } from "lucide-react";
+import { useMemo } from "react";
 
 import { SectionCard } from "@/components/ui/SectionCard";
-import { formatDate, formatTime, useAlerts, type FleetAlert } from "@/lib/fleetHistory";
+import { formatDate, formatTime, kphToMph, useAllAlerts, type FleetAlert } from "@/lib/fleetHistory";
+import { useWorkspace } from "@/lib/workspace";
 
 const TYPE_META: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
   hard_brake: {
@@ -48,7 +50,7 @@ function AlertRow({ alert }: { alert: FleetAlert }) {
         {formatTime(alert.time)}
       </td>
       <td className="px-5 py-3 text-sm text-slate-500">
-        {alert.speed_kph > 0 ? `${alert.speed_kph} kph` : "—"}
+        {alert.speed_kph > 0 ? `${Math.round(kphToMph(alert.speed_kph))} mph` : "—"}
       </td>
       <td className="px-5 py-3 text-sm text-slate-400">
         {alert.lat != null ? `${alert.lat.toFixed(4)}, ${alert.lon?.toFixed(4)}` : "—"}
@@ -58,7 +60,15 @@ function AlertRow({ alert }: { alert: FleetAlert }) {
 }
 
 export default function AlertsPage() {
-  const { alerts, loading, error } = useAlerts("tracker-001");
+  const { state } = useWorkspace();
+  const deviceIds = useMemo(
+    () =>
+      state.vehicles
+        .map((v) => v.deviceAssignment)
+        .filter((id): id is string => Boolean(id) && id !== "Not assigned"),
+    [state.vehicles],
+  );
+  const { alerts, loading, error } = useAllAlerts(deviceIds);
 
   const counts = alerts.reduce(
     (acc, a) => {
@@ -74,7 +84,7 @@ export default function AlertsPage() {
         <p className="text-sm font-semibold uppercase text-brand-forest">Alerts</p>
         <h1 className="mt-1 text-3xl font-bold text-brand-ink">Alerts</h1>
         <p className="mt-2 text-sm text-slate-500">
-          Driving events detected by tracker-001 — hard braking, rapid acceleration, and speeding.
+          Driving events across all vehicles — hard braking, rapid acceleration, and speeding.
         </p>
       </div>
 
@@ -99,7 +109,17 @@ export default function AlertsPage() {
         </SectionCard>
       )}
 
-      {!loading && !error && alerts.length === 0 && (
+      {!loading && !error && deviceIds.length === 0 && (
+        <SectionCard className="p-8 text-center">
+          <BellRing size={22} className="mx-auto mb-3 text-slate-300" />
+          <p className="text-sm font-semibold text-brand-ink">No trackers assigned</p>
+          <p className="mt-1 text-sm text-slate-500">
+            Go to Devices and assign a tracker to a vehicle to start recording events.
+          </p>
+        </SectionCard>
+      )}
+
+      {!loading && !error && deviceIds.length > 0 && alerts.length === 0 && (
         <SectionCard className="p-8 text-center">
           <BellRing size={22} className="mx-auto mb-3 text-slate-300" />
           <p className="text-sm font-semibold text-brand-ink">No alerts recorded</p>

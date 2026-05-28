@@ -6,6 +6,7 @@ import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 import { BrandLogo } from "@/components/branding/BrandLogo";
 import { navigationItems } from "@/lib/navigation";
+import { useAllTrackers } from "@/lib/liveTracker";
 import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +18,8 @@ interface SidebarNavProps {
 export function SidebarNav({ collapsed, onToggle }: SidebarNavProps) {
   const pathname = usePathname();
   const { state, serviceArea, hasServiceArea } = useWorkspace();
+  const trackers = useAllTrackers();
+  const onlineCount = trackers.length;
 
   return (
     <aside
@@ -67,9 +70,8 @@ export function SidebarNav({ collapsed, onToggle }: SidebarNavProps) {
               {hasServiceArea ? serviceArea.label : "Not set"}
             </h3>
             <p className="mt-2 text-xs leading-5 text-slate-500">
-              {state.vehicles.length} vehicle{state.vehicles.length === 1 ? "" : "s"},{" "}
-              {state.drivers.length} driver{state.drivers.length === 1 ? "" : "s"},{" "}
-              {state.trackerAssignmentVehicleId ? "tracker-001 assigned" : "tracker-001 available"}.
+              {state.vehicles.length} vehicle{state.vehicles.length === 1 ? "" : "s"} ·{" "}
+              {onlineCount} tracker{onlineCount === 1 ? "" : "s"} online
             </p>
           </>
         ) : (

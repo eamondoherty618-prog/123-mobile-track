@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { PwaRegistrar } from "@/components/mobile/PwaRegistrar";
+import { AuthProvider } from "@/lib/auth";
 import { WorkspaceProvider } from "@/lib/workspace";
 
 import "./globals.css";
@@ -34,10 +35,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <WorkspaceProvider>
-          <PwaRegistrar />
-          <AppShell>{children}</AppShell>
-        </WorkspaceProvider>
+        <AuthProvider>
+          <WorkspaceProvider>
+            <PwaRegistrar />
+            <AppShell>{children}</AppShell>
+          </WorkspaceProvider>
+        </AuthProvider>
       </body>
     </html>
   );

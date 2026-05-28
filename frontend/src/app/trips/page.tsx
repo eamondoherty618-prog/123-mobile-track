@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Route } from "lucide-react";
 
 import { SectionCard } from "@/components/ui/SectionCard";
@@ -10,10 +10,14 @@ import {
   formatDate,
   formatDuration,
   formatTime,
+  kmToMiles,
+  kphToMph,
+  useAllTrips,
   type RoutePoint,
   type TripSummary,
-  useTrips,
 } from "@/lib/fleetHistory";
+import { useGeocode } from "@/lib/geocode";
+import { useWorkspace } from "@/lib/workspace";
 
 const TripRouteMapClient = dynamic(
   () => import("@/components/map/TripRouteMapClient"),
@@ -32,10 +36,19 @@ const EVENT_COLOR: Record<string, string> = {
   speeding: "bg-orange-100 text-orange-700 border-orange-200",
 };
 
-function TripRow({ trip }: { trip: TripSummary }) {
+function TripRow({
+  trip,
+  vehicleName,
+}: {
+  trip: TripSummary;
+  vehicleName: string;
+}) {
   const [open, setOpen] = useState(false);
   const [route, setRoute] = useState<RoutePoint[] | null>(null);
   const [loadingRoute, setLoadingRoute] = useState(false);
+
+  const fromLabel = useGeocode(trip.start_lat, trip.start_lon);
+  const toLabel = useGeocode(trip.end_lat, trip.end_lon);
 
   async function toggle() {
     if (!open && route === null) {
@@ -53,20 +66,28 @@ function TripRow({ trip }: { trip: TripSummary }) {
   }
 
   const uniqueEventTypes = [...new Set(trip.events.map((e) => e.type))];
+  const isSameLocation = fromLabel !== "…" && toLabel !== "…" && fromLabel === toLabel;
 
   return (
     <div className="border-t border-brand-line">
       <button
         onClick={toggle}
-        className="flex w-full items-center gap-4 px-5 py-4 text-left hover:bg-brand-cloud/60 transition-colors"
+        className="flex w-full items-start gap-4 px-5 py-4 text-left hover:bg-brand-cloud/60 transition-colors"
       >
         <div className="flex-1 min-w-0">
+          {/* Route label */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-brand-ink">
-              {formatDate(trip.start_time)}
+            <span className="rounded-md bg-brand-cloud px-2 py-0.5 text-xs font-semibold text-brand-navy">
+              {vehicleName}
             </span>
+            <span className="text-sm font-semibold text-brand-ink">
+              {isSameLocation ? fromLabel : `${fromLabel} → ${toLabel}`}
+            </span>
+          </div>
+          {/* Date + time + event badges */}
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
             <span className="text-xs text-slate-400">
-              {formatTime(trip.start_time)} → {formatTime(trip.end_time)}
+              {formatDate(trip.start_time)} · {formatTime(trip.start_time)}–{formatTime(trip.end_time)}
             </span>
             {uniqueEventTypes.map((t) => (
               <span
@@ -78,23 +99,29 @@ function TripRow({ trip }: { trip: TripSummary }) {
             ))}
           </div>
         </div>
-        <div className="hidden sm:flex gap-6 text-sm text-slate-500 shrink-0">
-          <span>{trip.distance_km.toFixed(1)} km</span>
+
+        <div className="hidden sm:flex gap-5 text-sm text-slate-500 shrink-0 pt-0.5">
+          <span>{kmToMiles(trip.distance_km).toFixed(1)} mi</span>
           <span>{formatDuration(trip.duration_s)}</span>
-          <span>max {trip.max_speed_kph} kph</span>
+          <span>max {Math.round(kphToMph(trip.max_speed_kph))} mph</span>
         </div>
-        <span className="text-slate-400 shrink-0">
+        <span className="text-slate-400 shrink-0 pt-1">
           {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
         </span>
       </button>
 
       {open && (
         <div className="px-5 pb-5 space-y-4">
+          {!isSameLocation && (
+            <p className="text-sm text-slate-500">
+              {fromLabel} → {toLabel}
+            </p>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-            <Stat label="Distance" value={`${trip.distance_km.toFixed(2)} km`} />
+            <Stat label="Distance" value={`${kmToMiles(trip.distance_km).toFixed(2)} mi`} />
             <Stat label="Duration" value={formatDuration(trip.duration_s)} />
-            <Stat label="Max speed" value={`${trip.max_speed_kph} kph`} />
-            <Stat label="Avg speed" value={`${trip.avg_speed_kph} kph`} />
+            <Stat label="Max speed" value={`${Math.round(kphToMph(trip.max_speed_kph))} mph`} />
+            <Stat label="Avg speed" value={`${Math.round(kphToMph(trip.avg_speed_kph))} mph`} />
           </div>
 
           {loadingRoute && <div className="h-48 animate-pulse rounded-lg bg-brand-cloud" />}
@@ -110,7 +137,7 @@ function TripRow({ trip }: { trip: TripSummary }) {
                       {EVENT_LABEL[ev.type] ?? ev.type}
                     </span>
                     <span>{formatTime(ev.time)}</span>
-                    {ev.speed_kph > 0 && <span>{ev.speed_kph} kph</span>}
+                    {ev.speed_kph > 0 && <span>{Math.round(kphToMph(ev.speed_kph))} mph</span>}
                   </div>
                 ))}
               </div>
@@ -132,7 +159,32 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 export default function TripsPage() {
-  const { trips, loading, error } = useTrips("tracker-001");
+  const { state } = useWorkspace();
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+
+  const assignedVehicles = useMemo(
+    () => state.vehicles.filter((v) => v.deviceAssignment && v.deviceAssignment !== "Not assigned"),
+    [state.vehicles],
+  );
+
+  const deviceIds = useMemo(
+    () => assignedVehicles.map((v) => v.deviceAssignment),
+    [assignedVehicles],
+  );
+
+  const deviceToVehicleName = useMemo(
+    () => Object.fromEntries(assignedVehicles.map((v) => [v.deviceAssignment, v.name])),
+    [assignedVehicles],
+  );
+
+  const { trips, loading, error } = useAllTrips(deviceIds);
+
+  const filteredTrips = useMemo(() => {
+    if (!selectedVehicleId) return trips;
+    const vehicle = assignedVehicles.find((v) => v.id === selectedVehicleId);
+    if (!vehicle) return trips;
+    return trips.filter((t) => t.device_id === vehicle.deviceAssignment);
+  }, [trips, selectedVehicleId, assignedVehicles]);
 
   return (
     <div className="space-y-5">
@@ -140,9 +192,38 @@ export default function TripsPage() {
         <p className="text-sm font-semibold uppercase text-brand-forest">Trips</p>
         <h1 className="mt-1 text-3xl font-bold text-brand-ink">Trips</h1>
         <p className="mt-2 text-sm text-slate-500">
-          Route history, mileage, and driving events logged by tracker-001.
+          Route history, mileage, and driving events across all vehicles.
         </p>
       </div>
+
+      {/* Vehicle filter tabs */}
+      {assignedVehicles.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setSelectedVehicleId(null)}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              selectedVehicleId === null
+                ? "bg-brand-navy text-white"
+                : "bg-brand-cloud text-brand-text hover:bg-brand-line"
+            }`}
+          >
+            All vehicles
+          </button>
+          {assignedVehicles.map((v) => (
+            <button
+              key={v.id}
+              onClick={() => setSelectedVehicleId(v.id)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                selectedVehicleId === v.id
+                  ? "bg-brand-navy text-white"
+                  : "bg-brand-cloud text-brand-text hover:bg-brand-line"
+              }`}
+            >
+              {v.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading && (
         <SectionCard className="p-8 text-center text-sm text-slate-400">
@@ -156,26 +237,42 @@ export default function TripsPage() {
         </SectionCard>
       )}
 
-      {!loading && !error && trips.length === 0 && (
+      {!loading && !error && deviceIds.length === 0 && (
         <SectionCard className="p-8 text-center">
           <Route size={22} className="mx-auto mb-3 text-slate-300" />
-          <p className="text-sm font-semibold text-brand-ink">No trips recorded yet</p>
+          <p className="text-sm font-semibold text-brand-ink">No trackers assigned</p>
           <p className="mt-1 text-sm text-slate-500">
-            Trips appear after the tracker gets a GPS fix and starts moving.
+            Go to Devices and assign a tracker to a vehicle to start logging trips.
           </p>
         </SectionCard>
       )}
 
-      {!loading && trips.length > 0 && (
+      {!loading && !error && deviceIds.length > 0 && filteredTrips.length === 0 && (
+        <SectionCard className="p-8 text-center">
+          <Route size={22} className="mx-auto mb-3 text-slate-300" />
+          <p className="text-sm font-semibold text-brand-ink">No trips recorded yet</p>
+          <p className="mt-1 text-sm text-slate-500">
+            Trips appear after a tracker gets a GPS fix and starts moving.
+          </p>
+        </SectionCard>
+      )}
+
+      {!loading && filteredTrips.length > 0 && (
         <SectionCard className="overflow-hidden">
           <div className="flex items-center justify-between gap-3 border-b border-brand-line px-5 py-4">
             <div>
               <h3 className="text-base font-semibold text-brand-ink">Trip log</h3>
-              <p className="text-sm text-slate-500">{trips.length} trip{trips.length !== 1 ? "s" : ""} — click to expand route and events</p>
+              <p className="text-sm text-slate-500">
+                {filteredTrips.length} trip{filteredTrips.length !== 1 ? "s" : ""} — click to expand route and events
+              </p>
             </div>
           </div>
-          {trips.map((trip) => (
-            <TripRow key={trip.id} trip={trip} />
+          {filteredTrips.map((trip) => (
+            <TripRow
+              key={trip.id}
+              trip={trip}
+              vehicleName={deviceToVehicleName[trip.device_id] ?? trip.device_id}
+            />
           ))}
         </SectionCard>
       )}

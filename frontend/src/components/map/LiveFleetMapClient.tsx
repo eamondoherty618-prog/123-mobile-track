@@ -3,29 +3,53 @@
 import "leaflet/dist/leaflet.css";
 
 import { divIcon } from "leaflet";
-import { Layers3, LocateFixed } from "lucide-react";
-import { MapContainer, Marker, TileLayer, Tooltip, ZoomControl } from "react-leaflet";
+import { useEffect, useRef } from "react";
+import { MapContainer, Marker, TileLayer, Tooltip, ZoomControl, useMap } from "react-leaflet";
 
-import { useLiveTracker } from "@/lib/liveTracker";
+import { useAllTrackers } from "@/lib/liveTracker";
 import { useWorkspace } from "@/lib/workspace";
 
-import { Badge } from "../ui/Badge";
 import { SectionCard } from "../ui/SectionCard";
 
-function markerIcon(selected: boolean) {
+// Fit map to all GPS markers the first time they appear, then leave it alone.
+function FitBoundsOnce({ points }: { points: [number, number][] }) {
+  const map = useMap();
+  const hasFit = useRef(false);
+  useEffect(() => {
+    if (hasFit.current || points.length === 0) return;
+    if (points.length === 1) {
+      map.setView(points[0], 14);
+    } else {
+      map.fitBounds(points as [number, number][], { padding: [50, 50], maxZoom: 15 });
+    }
+    hasFit.current = true;
+  });
+  return null;
+}
+
+function dotIcon(color: string, size = 16) {
+  const half = size / 2;
   return divIcon({
     className: "",
-    html: `<div style="
-      width: 18px;
-      height: 18px;
-      border-radius: 999px;
-      background: ${selected ? "#15803d" : "#173754"};
-      border: 3px solid white;
-      box-shadow: 0 10px 24px rgba(18, 38, 63, 0.22);
-    "></div>`,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.25)"></div>`,
+    iconSize: [size, size],
+    iconAnchor: [half, half],
   });
+}
+
+function photoIcon(photo: string, color: string, size = 40) {
+  const half = size / 2;
+  return divIcon({
+    className: "",
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;border:3px solid ${color};box-shadow:0 2px 10px rgba(0,0,0,0.3)"><img src="${photo}" style="width:100%;height:100%;object-fit:cover"/></div>`,
+    iconSize: [size, size],
+    iconAnchor: [half, half],
+  });
+}
+
+function isRecentReport(receivedAt: string | undefined): boolean {
+  if (!receivedAt) return false;
+  return Date.now() - new Date(receivedAt).getTime() < 5 * 60 * 1000;
 }
 
 export function LiveFleetMapClient({
@@ -35,88 +59,128 @@ export function LiveFleetMapClient({
   selectedVehicleId?: string;
   onSelectVehicle?: (vehicleId: string) => void;
 }) {
-  const { state, serviceArea, hasServiceArea } = useWorkspace();
-  const { liveTracker } = useLiveTracker();
+  const { state, serviceArea } = useWorkspace();
+  const allTrackers = useAllTrackers();
 
-  const hasGps = Boolean(liveTracker?.has_fix && liveTracker.gps?.lat && liveTracker.gps?.lon);
-  const livePoint: [number, number] | null = hasGps
-    ? [Number(liveTracker?.gps?.lat), Number(liveTracker?.gps?.lon)]
-    : null;
+  // Vehicles with live GPS fix
+  const liveMarkers = allTrackers
+    .filter((t) => t.has_fix && t.gps?.lat && t.gps?.lon)
+    .map((t) => {
+      const vehicle = state.vehicles.find((v) => v.deviceAssignment === t.device_id);
+      const speedMph = Math.round(Number(t.gps?.speed_kph ?? 0) * 0.621371);
+      const selected =
+        selectedVehicleId === vehicle?.id || selectedVehicleId === t.device_id;
+      return {
+        id: t.device_id,
+        vehicleId: vehicle?.id,
+        name: vehicle?.name ?? t.device_id,
+        photo: vehicle?.photo,
+        point: [Number(t.gps!.lat), Number(t.gps!.lon)] as [number, number],
+        speedMph,
+        selected,
+      };
+    });
 
-  // Only show real devices — never fall back to workspace placeholder locations.
-  const markers = livePoint
-    ? [{ id: "tracker-001", name: "tracker-001", region: "Live GPS", point: livePoint }]
-    : [];
-  const center: [number, number] = livePoint ?? serviceArea.center;
+  const hasGps = liveMarkers.length > 0;
+  const center: [number, number] = liveMarkers[0]?.point ?? serviceArea.center;
+
+  // Status rows for overlay (all trackers, GPS or not)
+  const statusRows = allTrackers.map((t) => {
+    const vehicle = state.vehicles.find((v) => v.deviceAssignment === t.device_id);
+    const name = vehicle?.name ?? t.device_id;
+    const live = Boolean(t.has_fix && t.gps?.lat && t.gps?.lon);
+    const online = isRecentReport(t.received_at);
+    const speedMph = live ? Math.round(Number(t.gps?.speed_kph ?? 0) * 0.621371) : 0;
+    return { id: t.device_id, name, live, online, speedMph };
+  });
 
   return (
     <SectionCard className="overflow-hidden">
-      <div className="flex items-center justify-between border-b border-brand-line px-5 py-4">
-        <div>
-          <h2 className="text-lg font-semibold text-brand-ink">Live map</h2>
-          <p className="text-sm text-slate-500">
-            Current tracker location and vehicle status.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          <Badge>OpenStreetMap</Badge>
-          <Badge>Live markers</Badge>
-          {hasGps && <Badge>GPS active</Badge>}
-        </div>
+      <div className="border-b border-brand-line px-5 py-4">
+        <h2 className="text-lg font-semibold text-brand-ink">Live map</h2>
+        <p className="text-sm text-slate-500">
+          {hasGps
+            ? `${liveMarkers.length} vehicle${liveMarkers.length > 1 ? "s" : ""} with GPS fix · updates every 15 s`
+            : "Vehicle locations appear once trackers have a GPS fix outdoors."}
+        </p>
       </div>
 
-      <div className="relative min-h-[460px]">
+      <div className="relative h-[460px]">
         <MapContainer
           center={center}
-          zoom={9}
+          zoom={hasGps ? 13 : 10}
           zoomControl={false}
-          className="h-[460px] w-full"
+          style={{ height: "100%", width: "100%" }}
           scrollWheelZoom
         >
           <ZoomControl position="bottomright" />
+          <FitBoundsOnce points={liveMarkers.map((m) => m.point)} />
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
-          {markers.map((vehicle) => (
+          {liveMarkers.map((m) => (
             <Marker
-              key={vehicle.id}
-              position={vehicle.point}
-              icon={markerIcon(selectedVehicleId === vehicle.id)}
+              key={m.id}
+              position={m.point}
+              icon={
+                m.photo
+                  ? photoIcon(m.photo, m.selected ? "#15803d" : "#173754")
+                  : dotIcon(m.selected ? "#15803d" : "#173754")
+              }
               eventHandlers={{
-                click: () => onSelectVehicle?.(vehicle.id),
+                click: () => onSelectVehicle?.(m.vehicleId ?? m.id),
               }}
             >
-              <Tooltip direction="top" offset={[0, -10]} opacity={1}>
-                <div className="text-xs">
-                  <p className="font-semibold">{vehicle.name}</p>
-                  <p>{vehicle.region}</p>
+              <Tooltip direction="top" offset={[0, -12]} opacity={1} permanent={false}>
+                <div className="text-xs leading-snug">
+                  <p className="font-semibold">{m.name}</p>
+                  <p className="text-slate-500">
+                    {m.speedMph > 3 ? `${m.speedMph} mph` : "Stopped"} · Live GPS
+                  </p>
                 </div>
               </Tooltip>
             </Marker>
           ))}
         </MapContainer>
 
-        <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/70 bg-white/92 px-4 py-3 shadow-panel backdrop-blur">
-          <div className="flex items-center gap-2 text-sm text-brand-text">
-            <Layers3 size={16} className="text-brand-navy" />
-            {hasGps ? "Live tracker" : "Waiting for GPS fix"}
-          </div>
-          <div className="flex items-center gap-3 text-xs text-slate-500">
-            <span className="inline-flex items-center gap-1">
-              <span className="h-2.5 w-2.5 rounded-full bg-brand-forest" />
-              Selected
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-2.5 w-2.5 rounded-full bg-brand-navy" />
-              Vehicle
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <LocateFixed size={14} />
-              {hasGps ? "Live GPS" : hasServiceArea ? "Area view" : "Waiting for GPS"}
-            </span>
-          </div>
+        {/* Status overlay — always visible, shows every tracker */}
+        <div className="pointer-events-none absolute bottom-4 left-4 right-4 rounded-lg border border-white/70 bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
+          {statusRows.length === 0 ? (
+            <p className="text-sm text-slate-400">No trackers online yet.</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+              {statusRows.map((row) => (
+                <span key={row.id} className="inline-flex items-center gap-1.5 text-xs">
+                  <span
+                    className={`h-2.5 w-2.5 rounded-full ${
+                      row.live
+                        ? "bg-brand-navy"
+                        : row.online
+                        ? "bg-amber-400"
+                        : "bg-slate-300"
+                    }`}
+                  />
+                  <span className="font-medium text-brand-ink">{row.name}</span>
+                  <span className="text-slate-400">
+                    {row.live
+                      ? row.speedMph > 3
+                        ? `${row.speedMph} mph`
+                        : "stopped"
+                      : row.online
+                      ? "no GPS fix"
+                      : "offline"}
+                  </span>
+                </span>
+              ))}
+              {!hasGps && (
+                <span className="text-xs text-slate-400 ml-auto">
+                  Take trackers outdoors for GPS
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </SectionCard>

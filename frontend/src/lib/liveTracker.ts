@@ -7,6 +7,44 @@ import { Device } from "@/types";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 export const LIVE_TRACKER_ENDPOINT = `${API_BASE}/api/fleet/telemetry?device_id=tracker-001`;
 
+export type LiveTrackerPacket = {
+  device_id: string;
+  has_fix?: boolean;
+  battery_mv?: number;
+  cell_rssi?: number;
+  firmware?: string;
+  gps?: {
+    lat?: number | string;
+    lon?: number | string;
+    speed_kph?: number | string;
+    timestamp?: string;
+  };
+  motion_state?: string;
+  queued_messages?: number;
+  received_at?: string;
+};
+
+export function useAllTrackers() {
+  const [trackers, setTrackers] = useState<LiveTrackerPacket[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch(`${API_BASE}/api/fleet/telemetry`, { cache: "no-store" });
+        if (!res.ok) return;
+        const body = (await res.json()) as { ok: boolean; devices?: Record<string, LiveTrackerPacket> };
+        if (!cancelled && body.devices) setTrackers(Object.values(body.devices));
+      } catch {
+        // non-fatal
+      }
+    }
+    load();
+    const id = window.setInterval(load, 15000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, []);
+  return trackers;
+}
+
 export type LiveTracker = {
   battery_mv?: number;
   cell_rssi?: number;
@@ -121,9 +159,9 @@ export function useSetupChecklist(
         detail:
           vehicleCount > 0
             ? trackerAssigned
-              ? "tracker-001 is linked to a vehicle record."
-              : "A vehicle record exists. Link tracker-001 to finish this step."
-            : "Create the first vehicle record and assign this tracker to it.",
+              ? "A tracker is linked to a vehicle record."
+              : "A vehicle record exists. Go to Devices to assign a tracker."
+            : "Create the first vehicle record and assign a tracker to it.",
       },
       {
         title: "GPS lock confirmed outdoors",

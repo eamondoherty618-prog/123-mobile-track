@@ -137,3 +137,94 @@ export function formatDate(iso: string): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
+
+export function kmToMiles(km: number): number {
+  return km * 0.621371;
+}
+
+export function kphToMph(kph: number): number {
+  return kph * 0.621371;
+}
+
+export function useAllTrips(deviceIds: string[]) {
+  const [trips, setTrips] = useState<TripSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const key = deviceIds.join(",");
+
+  useEffect(() => {
+    if (deviceIds.length === 0) {
+      setTrips([]);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    async function load() {
+      try {
+        const results = await Promise.all(
+          deviceIds.map((id) =>
+            fetch(`${API_BASE}/api/fleet/trips?device_id=${id}`, { cache: "no-store" })
+              .then((r) => r.json() as Promise<{ ok: boolean; trips: TripSummary[] }>)
+          )
+        );
+        if (!cancelled) {
+          const all = results.flatMap((r) => r.trips ?? []);
+          all.sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+          setTrips(all);
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load trips");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  return { trips, loading, error };
+}
+
+export function useAllAlerts(deviceIds: string[]) {
+  const [alerts, setAlerts] = useState<FleetAlert[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const key = deviceIds.join(",");
+
+  useEffect(() => {
+    if (deviceIds.length === 0) {
+      setAlerts([]);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    async function load() {
+      try {
+        const results = await Promise.all(
+          deviceIds.map((id) =>
+            fetch(`${API_BASE}/api/fleet/alerts?device_id=${id}`, { cache: "no-store" })
+              .then((r) => r.json() as Promise<{ ok: boolean; alerts: FleetAlert[] }>)
+          )
+        );
+        if (!cancelled) {
+          const all = results.flatMap((r) => r.alerts ?? []);
+          all.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+          setAlerts(all);
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load alerts");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    const iv = window.setInterval(load, 30000);
+    return () => { cancelled = true; window.clearInterval(iv); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  return { alerts, loading, error };
+}
