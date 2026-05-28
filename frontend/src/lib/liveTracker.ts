@@ -30,7 +30,7 @@ export function useAllTrackers() {
     let cancelled = false;
     async function load() {
       try {
-        const res = await fetch(`${API_BASE}/api/fleet/telemetry`, { cache: "no-store" });
+        const res = await fetch(`${API_BASE}/api/fleet/latest`, { cache: "no-store" });
         if (!res.ok) return;
         const body = (await res.json()) as { ok: boolean; devices?: Record<string, LiveTrackerPacket> };
         if (!cancelled && body.devices) setTrackers(Object.values(body.devices));
