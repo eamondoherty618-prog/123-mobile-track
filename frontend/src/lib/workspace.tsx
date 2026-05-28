@@ -202,7 +202,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
 
     return items;
-  }, [state.drivers.length, state.maintenanceItems, state.setupComplete, state.vehicles]);
+  }, [state.maintenanceItems, state.setupComplete, state.vehicles]);
 
   const value = useMemo<WorkspaceContextValue>(
     () => ({
