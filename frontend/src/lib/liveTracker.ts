@@ -1,11 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react"; // useState used by useAllTrackers, useMemo by useSetupChecklist
-
-import { getStoredToken } from "@/lib/auth";
-import { Device } from "@/types";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
+import { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 export type LiveTrackerPacket = {
   device_id: string;
@@ -32,45 +28,65 @@ export type LiveTrackerPacket = {
   stopped_since?: string | null;
 };
 
+function rowToPacket(row: Record<string, unknown>): LiveTrackerPacket {
+  return {
+    device_id: row.device_id as string,
+    has_fix: row.has_fix as boolean | undefined,
+    fix_source: row.fix_source as string | undefined,
+    battery_mv: row.battery_mv as number | undefined,
+    cell_rssi: row.cell_rssi as number | undefined,
+    firmware: row.firmware as string | undefined,
+    motion_state: row.motion_state as string | undefined,
+    queued_messages: row.queued_messages as number | undefined,
+    received_at: row.received_at as string | undefined,
+    stopped_since: row.stopped_since as string | null | undefined,
+    gps: row.lat != null ? {
+      lat: row.lat as number,
+      lon: row.lon as number,
+      speed_kph: row.speed_kph as number | undefined,
+      timestamp: row.gps_timestamp as string | undefined,
+    } : undefined,
+    last_gps: row.last_lat != null ? {
+      lat: row.last_lat as number,
+      lon: row.last_lon as number,
+    } : undefined,
+  };
+}
+
 export function useAllTrackers() {
   const [trackers, setTrackers] = useState<LiveTrackerPacket[]>([]);
+
   useEffect(() => {
     let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
 
     async function load() {
-      if (document.hidden) return; // skip when tab is backgrounded
+      if (document.hidden) return;
       try {
-        const token = getStoredToken();
-        const res = await fetch(`${API_BASE}/api/fleet/latest`, {
-          cache: "no-store",
-          headers: token ? { authorization: `Bearer ${token}` } : {},
-        });
-        if (!res.ok) return;
-        const body = (await res.json()) as { ok: boolean; devices?: Record<string, LiveTrackerPacket> };
-        if (!cancelled && body.devices) setTrackers(Object.values(body.devices));
+        const { data } = await supabase.from("telemetry_latest").select("*");
+        if (!cancelled && data) setTrackers(data.map(rowToPacket));
       } catch {
         // non-fatal
       }
     }
 
     function onVisible() {
-      if (!document.hidden) load(); // fetch immediately when tab comes back into focus
+      if (!document.hidden) load();
     }
 
     load();
-    intervalId = window.setInterval(load, 60000); // poll every 60 s instead of 15 s
+    const intervalId = window.setInterval(load, 60000);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
-      if (intervalId) window.clearInterval(intervalId);
+      window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
+
   return trackers;
 }
 
-export function buildPrototypeDevice(liveTracker: LiveTrackerPacket | null): Device {
+export function buildPrototypeDevice(liveTracker: LiveTrackerPacket | null) {
   const signalStrength = Math.max(
     0,
     Math.min(100, Math.round(((liveTracker?.cell_rssi ?? 0) / 31) * 100)),

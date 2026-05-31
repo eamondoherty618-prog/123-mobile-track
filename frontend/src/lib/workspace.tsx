@@ -4,7 +4,8 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 
 import { Driver, Geofence, MaintenanceItem, Vehicle } from "@/types";
 import { useAllTrackers } from "@/lib/liveTracker";
-import { useAuth, getStoredToken } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
 
 type DateRangeOption = "Today" | "Last 7 days" | "Last 30 days" | "This month";
 
@@ -166,32 +167,73 @@ function offsetPoint(center: [number, number], index: number): [number, number] 
   return [center[0] + latOffset, center[1] + lngOffset];
 }
 
-async function fetchWorkspace(): Promise<WorkspaceState | null> {
-  const token = getStoredToken();
-  if (!token) return null;
+async function getOrCreateOrg(userId: string, email: string): Promise<string | null> {
+  // Check existing membership
+  const { data: membership } = await supabase
+    .from("organization_members")
+    .select("org_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (membership?.org_id) return membership.org_id;
+
+  // Create a new org and make this user the owner
+  const { data: org, error } = await supabase
+    .from("organizations")
+    .insert({ name: "123 Mobile Track", admin_email: email })
+    .select("id")
+    .single();
+
+  if (error || !org) return null;
+
+  await supabase.from("organization_members").insert({
+    org_id: org.id,
+    user_id: userId,
+    email,
+    role: "owner",
+  });
+
+  return org.id;
+}
+
+async function fetchWorkspace(userId: string, email: string): Promise<WorkspaceState | null> {
   try {
-    const res = await fetch("/api/workspace", {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const body = await res.json() as { ok: boolean; workspace: WorkspaceState | null };
-    return body.workspace;
+    const orgId = await getOrCreateOrg(userId, email);
+    if (!orgId) return null;
+
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("workspace_blob")
+      .eq("id", orgId)
+      .single();
+
+    return (org?.workspace_blob as WorkspaceState) ?? null;
   } catch {
     return null;
   }
 }
 
-async function saveWorkspace(state: WorkspaceState): Promise<boolean> {
-  const token = getStoredToken();
-  if (!token) return false;
+async function saveWorkspace(state: WorkspaceState, userId: string, email: string): Promise<boolean> {
   try {
-    const res = await fetch("/api/workspace", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(state),
-    });
-    return res.ok;
+    const orgId = await getOrCreateOrg(userId, email);
+    if (!orgId) return false;
+
+    const { error } = await supabase
+      .from("organizations")
+      .update({
+        workspace_blob: state,
+        name: state.companyName,
+        service_area_id: state.serviceAreaId,
+        timezone: state.timezone,
+        admin_name: state.adminName,
+        admin_email: state.adminEmail,
+        setup_complete: state.setupComplete,
+        tracker_assignment_vehicle_id: state.trackerAssignmentVehicleId ?? "",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orgId);
+
+    return !error;
   } catch {
     return false;
   }
@@ -237,9 +279,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const userId = user.id;
+    const email = user.email;
+
     async function load() {
-      // Try server
-      const serverState = await fetchWorkspace();
+      const serverState = await fetchWorkspace(userId, email);
       if (serverState) {
         const normalized = { ...defaultState, ...serverState };
         if (!normalized.setupComplete && normalized.serviceAreaId) normalized.serviceAreaId = "";
@@ -250,7 +294,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // Fall back to localStorage (existing users / offline)
+      // Fall back to localStorage for existing users migrating from Netlify Blobs
       try {
         const raw = window.localStorage.getItem(STORAGE_KEY);
         if (raw) {
@@ -259,9 +303,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           if (!normalized.setupComplete && normalized.serviceAreaId) normalized.serviceAreaId = "";
           migrateDriverAssignments(normalized);
           setState(normalized);
-          // Migrate to server — retry a few times to handle token refresh timing
           const tryMigrate = async (attempt: number) => {
-            const ok = await saveWorkspace(normalized);
+            const ok = await saveWorkspace(normalized, userId, email);
             if (ok) { setServerSynced(true); return; }
             if (attempt < 4) setTimeout(() => tryMigrate(attempt + 1), attempt * 2000 + 2000);
           };
@@ -280,10 +323,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(async () => {
-      const ok = await saveWorkspace(nextState);
+      if (!user) return;
+      const ok = await saveWorkspace(nextState, user.id, user.email);
       if (ok) setServerSynced(true);
     }, 1500);
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (!serverLoaded) return;
@@ -346,9 +390,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [state.maintenanceItems, state.setupComplete, state.vehicles, liveTrackers]);
 
   const forceSyncToServer = useCallback(async () => {
-    const ok = await saveWorkspace(stateRef.current);
+    if (!user) return;
+    const ok = await saveWorkspace(stateRef.current, user.id, user.email);
     if (ok) setServerSynced(true);
-  }, []);
+  }, [user]);
 
   const value = useMemo<WorkspaceContextValue>(
     () => ({
@@ -448,22 +493,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           })),
         })),
       addAdmin: (payload) => {
-        const memberEmail = payload.email.trim().toLowerCase();
-        const registerMember = async (attempt: number) => {
-          const token = getStoredToken();
-          if (!token) return;
-          try {
-            const res = await fetch("/api/workspace/members", {
-              method: "POST",
-              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ email: memberEmail }),
-            });
-            if (!res.ok && attempt < 4) setTimeout(() => registerMember(attempt + 1), 2000 * (attempt + 1));
-          } catch {
-            if (attempt < 4) setTimeout(() => registerMember(attempt + 1), 2000 * (attempt + 1));
-          }
+        // Register as org member in Supabase so they can access the org's data on login
+        const registerMember = async () => {
+          if (!user) return;
+          const orgId = await getOrCreateOrg(user.id, user.email);
+          if (!orgId) return;
+          // We store the invited email; they'll get linked to org_id when they sign up/in
+          await supabase.from("organization_members").upsert({
+            org_id: orgId,
+            user_id: payload.email, // placeholder until they sign in
+            email: payload.email.trim().toLowerCase(),
+            role: "admin",
+          }, { onConflict: "org_id,user_id" });
         };
-        registerMember(0);
+        registerMember();
         setState((current) => ({
           ...current,
           admins: [
@@ -479,58 +522,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       },
       removeAdmin: (adminId) => {
         const admin = state.admins.find((a) => a.id === adminId);
-        if (admin) {
-          const memberEmail = admin.email.trim().toLowerCase();
-          const revokeMember = async (attempt: number) => {
-            const token = getStoredToken();
-            if (!token) return;
-            try {
-              const res = await fetch("/api/workspace/members", {
-                method: "DELETE",
-                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ email: memberEmail }),
-              });
-              if (!res.ok && res.status !== 404 && attempt < 4) setTimeout(() => revokeMember(attempt + 1), 2000 * (attempt + 1));
-            } catch {
-              if (attempt < 4) setTimeout(() => revokeMember(attempt + 1), 2000 * (attempt + 1));
-            }
+        if (admin && user) {
+          const removeFromOrg = async () => {
+            const orgId = await getOrCreateOrg(user.id, user.email);
+            if (!orgId) return;
+            await supabase.from("organization_members")
+              .delete()
+              .eq("org_id", orgId)
+              .eq("email", admin.email.trim().toLowerCase());
           };
-          revokeMember(0);
+          removeFromOrg();
         }
         setState((current) => ({
           ...current,
           admins: current.admins.filter((a) => a.id !== adminId),
         }));
       },
-      updateAdmin: (adminId, updates) => {
-        const admin = state.admins.find((a) => a.id === adminId);
-        if (admin && updates.email && updates.email !== admin.email) {
-          const oldEmail = admin.email.trim().toLowerCase();
-          const newEmail = updates.email.trim().toLowerCase();
-          const call = async (method: "POST" | "DELETE", email: string, attempt: number) => {
-            const token = getStoredToken();
-            if (!token) return;
-            try {
-              const res = await fetch("/api/workspace/members", {
-                method,
-                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ email }),
-              });
-              if (!res.ok && res.status !== 404 && attempt < 4) setTimeout(() => call(method, email, attempt + 1), 2000 * (attempt + 1));
-            } catch {
-              if (attempt < 4) setTimeout(() => call(method, email, attempt + 1), 2000 * (attempt + 1));
-            }
-          };
-          call("DELETE", oldEmail, 0);
-          call("POST", newEmail, 0);
-        }
+      updateAdmin: (adminId, updates) =>
         setState((current) => ({
           ...current,
           admins: current.admins.map((a) =>
             a.id === adminId ? { ...a, ...updates } : a,
           ),
-        }));
-      },
+        })),
       updateAdminAlerts: (adminId, alertTypes) =>
         setState((current) => ({
           ...current,

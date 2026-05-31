@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "123 Mobile Track",
+    "slug": "mobile-track",
+    "version": "1.0.0",
+    "scheme": "mobiletrack",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a2e1a"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.123mobiletrack.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Used to set depot WiFi shortcut coordinates.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Used to set depot WiFi shortcut coordinates."
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#1a2e1a"
+        }
+      ]
+    ]
+  }
+}
