@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
 import { serviceAreaOptions, useWorkspace } from "@/lib/workspace";
@@ -23,6 +23,19 @@ export function SetupWorkspaceModal({
     adminEmail: state.adminEmail,
   });
 
+  useEffect(() => {
+    if (open) {
+      setForm({
+        companyName: state.companyName,
+        serviceAreaId: state.serviceAreaId,
+        timezone: state.timezone,
+        adminName: state.adminName,
+        adminEmail: state.adminEmail,
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   if (!open) return null;
 
   const canSubmit =
@@ -31,7 +44,7 @@ export function SetupWorkspaceModal({
     form.adminEmail.trim().length > 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-brand-ink/45 px-4">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-brand-ink/45 px-4">
       <div className="w-full max-w-2xl rounded-lg bg-white shadow-panel">
         <div className="flex items-center justify-between border-b border-brand-line px-6 py-4">
           <div>

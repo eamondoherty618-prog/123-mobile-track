@@ -8,6 +8,21 @@ import { useWorkspace } from "@/lib/workspace";
 
 import { Button } from "../ui/Button";
 
+const VEHICLE_COLORS = [
+  { name: "White",   hex: "#FFFFFF" },
+  { name: "Silver",  hex: "#C8CBD4" },
+  { name: "Gray",    hex: "#64748B" },
+  { name: "Black",   hex: "#1E293B" },
+  { name: "Red",     hex: "#DC2626" },
+  { name: "Blue",    hex: "#2563EB" },
+  { name: "Navy",    hex: "#173754" },
+  { name: "Green",   hex: "#16A34A" },
+  { name: "Yellow",  hex: "#FBBF24" },
+  { name: "Orange",  hex: "#F97316" },
+  { name: "Maroon",  hex: "#9F1239" },
+  { name: "Brown",   hex: "#78350F" },
+];
+
 const vehicleTypes = [
   "Van",
   "Pickup Truck",
@@ -68,6 +83,7 @@ export function AddVehicleModal({
   const { addVehicle, serviceArea, hasServiceArea } = useWorkspace();
   const [form, setForm] = useState(defaultForm);
   const [photo, setPhoto] = useState<string | null>(null);
+  const [vehicleColor, setVehicleColor] = useState<string>("");
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>(defaultFeatures);
 
   function toggleFeature(feature: string) {
@@ -96,24 +112,26 @@ export function AddVehicleModal({
     addVehicle({
       name: form.name,
       vehicleNumber: form.vehicleNumber || "01",
-      plate: form.plate || "Plate not added",
-      make: form.make || "Make not added",
-      model: form.model || "Model not added",
+      plate: form.plate,
+      make: form.make,
+      model: form.model,
       year: Number(form.year) || new Date().getFullYear(),
       type: form.type,
       notes: form.notes,
       installDate: form.installDate,
       enabledFeatures: selectedFeatures,
       photo: photo ?? undefined,
+      color: vehicleColor || undefined,
     });
     onClose();
     setForm(defaultForm);
     setPhoto(null);
+    setVehicleColor("");
     setSelectedFeatures(defaultFeatures);
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-brand-ink/45 px-4">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-brand-ink/45 px-4">
       <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-lg bg-white shadow-panel">
         <div className="sticky top-0 flex items-center justify-between border-b border-brand-line bg-white px-6 py-4">
           <div>
@@ -161,6 +179,31 @@ export function AddVehicleModal({
                   </button>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Vehicle color */}
+          <div className="md:col-span-2">
+            <p className="text-sm font-medium text-brand-text">Vehicle color <span className="text-xs font-normal text-slate-400">— shown on the fleet map</span></p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                title="None"
+                onClick={() => setVehicleColor("")}
+                className={`h-7 w-7 rounded-full border-2 flex items-center justify-center text-xs text-slate-400 bg-slate-100 transition-transform hover:scale-110 ${!vehicleColor ? "border-brand-navy scale-110" : "border-slate-200"}`}
+              >
+                —
+              </button>
+              {VEHICLE_COLORS.map((c) => (
+                <button
+                  key={c.hex}
+                  type="button"
+                  title={c.name}
+                  onClick={() => setVehicleColor(c.hex)}
+                  className={`h-7 w-7 rounded-full border-2 transition-transform hover:scale-110 ${vehicleColor === c.hex ? "border-brand-navy scale-110" : c.hex === "#FFFFFF" ? "border-slate-300" : "border-transparent"}`}
+                  style={{ background: c.hex }}
+                />
+              ))}
             </div>
           </div>
 

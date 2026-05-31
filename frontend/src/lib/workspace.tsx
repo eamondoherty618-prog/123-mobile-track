@@ -1,10 +1,21 @@
 "use client";
 
-import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { Driver, MaintenanceItem, Vehicle } from "@/types";
+import { Driver, Geofence, MaintenanceItem, Vehicle } from "@/types";
+import { useAllTrackers } from "@/lib/liveTracker";
+import { useAuth, getStoredToken } from "@/lib/auth";
 
 type DateRangeOption = "Today" | "Last 7 days" | "Last 30 days" | "This month";
+
+export type WifiShortcut = {
+  id: string;
+  ssids: string[];  // one or more network names for this location
+  ssid?: string;    // legacy field — old records only, do not write
+  label: string;
+  lat: number;
+  lon: number;
+};
 
 export type Admin = {
   id: string;
@@ -42,12 +53,17 @@ type WorkspaceState = {
   admins: Admin[];
   trackingProfile: TrackingProfile;
   maintenanceItems: MaintenanceItem[];
+  geofences: Geofence[];
+  wifiShortcuts: WifiShortcut[];
 };
 
 type WorkspaceContextValue = {
   state: WorkspaceState;
+  loaded: boolean;
   serviceArea: ServiceAreaOption;
   hasServiceArea: boolean;
+  serverSynced: boolean;
+  forceSyncToServer: () => Promise<void>;
   notifications: { id: string; title: string; detail: string }[];
   setDateRange: (value: DateRangeOption) => void;
   completeSetup: (payload: {
@@ -69,16 +85,28 @@ type WorkspaceContextValue = {
     installDate: string;
     enabledFeatures: string[];
     photo?: string;
+    color?: string;
+    deviceAssignment?: string;
   }) => void;
   addDriver: (payload: { name: string; phone: string; license: string; notes: string }) => void;
   assignTrackerToVehicle: (vehicleId: string, trackerId: string) => void;
   addAdmin: (payload: { name: string; email: string; alertTypes: string[] }) => void;
   removeAdmin: (adminId: string) => void;
+  updateAdmin: (adminId: string, updates: { name?: string; email?: string }) => void;
   updateAdminAlerts: (adminId: string, alertTypes: string[]) => void;
   updateTrackingProfile: (profile: Partial<TrackingProfile>) => void;
   addMaintenanceItem: (item: Omit<MaintenanceItem, "id">) => void;
   updateMaintenanceItem: (id: string, updates: Partial<Omit<MaintenanceItem, "id">>) => void;
   removeMaintenanceItem: (id: string) => void;
+  addGeofence: (item: Omit<Geofence, "id">) => void;
+  updateGeofence: (id: string, updates: Partial<Omit<Geofence, "id">>) => void;
+  removeGeofence: (id: string) => void;
+  addWifiShortcut: (item: Omit<WifiShortcut, "id">) => void;
+  removeWifiShortcut: (id: string) => void;
+  updateVehicle: (id: string, updates: Partial<Vehicle>) => void;
+  removeVehicle: (id: string) => void;
+  assignDriverToVehicle: (vehicleId: string, driverId: string) => void;
+  removeDriverFromVehicle: (vehicleId: string, driverId: string) => void;
 };
 
 const STORAGE_KEY = "mobile-track-workspace";
@@ -126,6 +154,8 @@ const defaultState: WorkspaceState = {
   ],
   trackingProfile: defaultTrackingProfile,
   maintenanceItems: [],
+  geofences: [],
+  wifiShortcuts: [],
 };
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -136,31 +166,131 @@ function offsetPoint(center: [number, number], index: number): [number, number] 
   return [center[0] + latOffset, center[1] + lngOffset];
 }
 
+async function fetchWorkspace(): Promise<WorkspaceState | null> {
+  const token = getStoredToken();
+  if (!token) return null;
+  try {
+    const res = await fetch("/api/workspace", {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const body = await res.json() as { ok: boolean; workspace: WorkspaceState | null };
+    return body.workspace;
+  } catch {
+    return null;
+  }
+}
+
+async function saveWorkspace(state: WorkspaceState): Promise<boolean> {
+  const token = getStoredToken();
+  if (!token) return false;
+  try {
+    const res = await fetch("/api/workspace", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(state),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function migrateDriverAssignments(state: WorkspaceState) {
+  for (const vehicle of state.vehicles) {
+    if (!vehicle.assignedDriverIds) vehicle.assignedDriverIds = [];
+    if (vehicle.assignedDriver && vehicle.assignedDriver !== "Not assigned" && vehicle.assignedDriverIds.length === 0) {
+      const driver = state.drivers.find((d) => d.name === vehicle.assignedDriver);
+      if (driver) vehicle.assignedDriverIds = [driver.id];
+    }
+  }
+  for (const driver of state.drivers) {
+    if (!driver.assignedVehicleIds) driver.assignedVehicleIds = [];
+    if (driver.assignedVehicle && driver.assignedVehicle !== "Not assigned" && driver.assignedVehicleIds.length === 0) {
+      const vehicle = state.vehicles.find((v) => v.name === driver.assignedVehicle);
+      if (vehicle) driver.assignedVehicleIds = [vehicle.id];
+    }
+  }
+}
+
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  const { user, loaded: authLoaded } = useAuth();
   const [state, setState] = useState<WorkspaceState>(defaultState);
+  const [serverLoaded, setServerLoaded] = useState(false);
+  const [serverSynced, setServerSynced] = useState(false);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stateRef = useRef<WorkspaceState>(defaultState);
+  stateRef.current = state;
 
+  // Reload workspace whenever the logged-in user changes (handles shared-device account switching).
   useEffect(() => {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
+    if (!authLoaded) return;
 
-    try {
-      const parsed = JSON.parse(raw) as WorkspaceState;
-      const normalized = { ...defaultState, ...parsed };
+    // Reset to default and mark as unloaded so saves don't fire with stale data.
+    setState(defaultState);
+    setServerLoaded(false);
+    setServerSynced(false);
 
-      // Clear legacy demo-region defaults from older first-run sessions.
-      if (!normalized.setupComplete && normalized.serviceAreaId) {
-        normalized.serviceAreaId = "";
+    if (!user) {
+      // Don't set serverLoaded=true here — keeps the save effect from firing with empty defaultState.
+      return;
+    }
+
+    async function load() {
+      // Try server
+      const serverState = await fetchWorkspace();
+      if (serverState) {
+        const normalized = { ...defaultState, ...serverState };
+        if (!normalized.setupComplete && normalized.serviceAreaId) normalized.serviceAreaId = "";
+        migrateDriverAssignments(normalized);
+        setState(normalized);
+        setServerSynced(true);
+        setServerLoaded(true);
+        return;
       }
 
-      setState(normalized);
-    } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
+      // Fall back to localStorage (existing users / offline)
+      try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as WorkspaceState;
+          const normalized = { ...defaultState, ...parsed };
+          if (!normalized.setupComplete && normalized.serviceAreaId) normalized.serviceAreaId = "";
+          migrateDriverAssignments(normalized);
+          setState(normalized);
+          // Migrate to server — retry a few times to handle token refresh timing
+          const tryMigrate = async (attempt: number) => {
+            const ok = await saveWorkspace(normalized);
+            if (ok) { setServerSynced(true); return; }
+            if (attempt < 4) setTimeout(() => tryMigrate(attempt + 1), attempt * 2000 + 2000);
+          };
+          tryMigrate(0);
+        }
+      } catch {
+        window.localStorage.removeItem(STORAGE_KEY);
+      }
+      setServerLoaded(true);
     }
+    load();
+  }, [user?.id, authLoaded]);
+
+  // Debounced save — write to both server and localStorage on every state change
+  const debouncedSave = useCallback((nextState: WorkspaceState) => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(async () => {
+      const ok = await saveWorkspace(nextState);
+      if (ok) setServerSynced(true);
+    }, 1500);
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+    if (!serverLoaded) return;
+    debouncedSave(state);
+  }, [state, serverLoaded, debouncedSave]);
+
+  const liveTrackers = useAllTrackers();
 
   const serviceArea =
     serviceAreaOptions.find((option) => option.id === state.serviceAreaId) ?? unsetServiceArea;
@@ -201,14 +331,33 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    const assignedIds = new Set(state.vehicles.map((v) => v.deviceAssignment).filter(Boolean));
+    for (const tracker of liveTrackers) {
+      if (tracker.device_id && !assignedIds.has(tracker.device_id)) {
+        items.push({
+          id: `new-device-${tracker.device_id}`,
+          title: `New tracker detected: ${tracker.device_id}`,
+          detail: "Go to Devices to assign it to a vehicle.",
+        });
+      }
+    }
+
     return items;
-  }, [state.maintenanceItems, state.setupComplete, state.vehicles]);
+  }, [state.maintenanceItems, state.setupComplete, state.vehicles, liveTrackers]);
+
+  const forceSyncToServer = useCallback(async () => {
+    const ok = await saveWorkspace(stateRef.current);
+    if (ok) setServerSynced(true);
+  }, []);
 
   const value = useMemo<WorkspaceContextValue>(
     () => ({
       state,
+      loaded: serverLoaded,
       serviceArea,
       hasServiceArea,
+      serverSynced,
+      forceSyncToServer,
       notifications,
       setDateRange: (value) => setState((current) => ({ ...current, dateRange: value })),
       completeSetup: (payload) =>
@@ -235,6 +384,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             year: payload.year,
             type: payload.type,
             assignedDriver: "Not assigned",
+            assignedDriverIds: [],
             region: hasServiceArea ? serviceArea.label : "Not set",
             status: "parked",
             gpsOnline: false,
@@ -249,8 +399,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             installDate: payload.installDate || "Install date not set",
             hardwareType: "ESP32 + SIM Tracker",
             photo: payload.photo,
-            deviceAssignment:
-              current.vehicles.length === 0 && !current.trackerAssignmentVehicleId ? "tracker-001" : "Not assigned",
+            color: payload.color,
+            deviceAssignment: payload.deviceAssignment ?? "Not assigned",
             location: { lat: location[0], lng: location[1], label: payload.name },
           };
 
@@ -272,6 +422,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               name: payload.name,
               phone: payload.phone,
               assignedVehicle: "Not assigned",
+              assignedVehicleIds: [],
               status: "available",
               region: hasServiceArea ? serviceArea.label : "Not set",
               license: payload.license || "License not added",
@@ -296,7 +447,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             lastSeen: vehicle.id === vehicleId ? "Connected now" : vehicle.lastSeen,
           })),
         })),
-      addAdmin: (payload) =>
+      addAdmin: (payload) => {
+        const memberEmail = payload.email.trim().toLowerCase();
+        const registerMember = async (attempt: number) => {
+          const token = getStoredToken();
+          if (!token) return;
+          try {
+            const res = await fetch("/api/workspace/members", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ email: memberEmail }),
+            });
+            if (!res.ok && attempt < 4) setTimeout(() => registerMember(attempt + 1), 2000 * (attempt + 1));
+          } catch {
+            if (attempt < 4) setTimeout(() => registerMember(attempt + 1), 2000 * (attempt + 1));
+          }
+        };
+        registerMember(0);
         setState((current) => ({
           ...current,
           admins: [
@@ -308,12 +475,62 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               alertTypes: payload.alertTypes,
             },
           ],
-        })),
-      removeAdmin: (adminId) =>
+        }));
+      },
+      removeAdmin: (adminId) => {
+        const admin = state.admins.find((a) => a.id === adminId);
+        if (admin) {
+          const memberEmail = admin.email.trim().toLowerCase();
+          const revokeMember = async (attempt: number) => {
+            const token = getStoredToken();
+            if (!token) return;
+            try {
+              const res = await fetch("/api/workspace/members", {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ email: memberEmail }),
+              });
+              if (!res.ok && res.status !== 404 && attempt < 4) setTimeout(() => revokeMember(attempt + 1), 2000 * (attempt + 1));
+            } catch {
+              if (attempt < 4) setTimeout(() => revokeMember(attempt + 1), 2000 * (attempt + 1));
+            }
+          };
+          revokeMember(0);
+        }
         setState((current) => ({
           ...current,
           admins: current.admins.filter((a) => a.id !== adminId),
-        })),
+        }));
+      },
+      updateAdmin: (adminId, updates) => {
+        const admin = state.admins.find((a) => a.id === adminId);
+        if (admin && updates.email && updates.email !== admin.email) {
+          const oldEmail = admin.email.trim().toLowerCase();
+          const newEmail = updates.email.trim().toLowerCase();
+          const call = async (method: "POST" | "DELETE", email: string, attempt: number) => {
+            const token = getStoredToken();
+            if (!token) return;
+            try {
+              const res = await fetch("/api/workspace/members", {
+                method,
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ email }),
+              });
+              if (!res.ok && res.status !== 404 && attempt < 4) setTimeout(() => call(method, email, attempt + 1), 2000 * (attempt + 1));
+            } catch {
+              if (attempt < 4) setTimeout(() => call(method, email, attempt + 1), 2000 * (attempt + 1));
+            }
+          };
+          call("DELETE", oldEmail, 0);
+          call("POST", newEmail, 0);
+        }
+        setState((current) => ({
+          ...current,
+          admins: current.admins.map((a) =>
+            a.id === adminId ? { ...a, ...updates } : a,
+          ),
+        }));
+      },
       updateAdminAlerts: (adminId, alertTypes) =>
         setState((current) => ({
           ...current,
@@ -346,8 +563,75 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           ...current,
           maintenanceItems: current.maintenanceItems.filter((m) => m.id !== id),
         })),
+      addGeofence: (item) =>
+        setState((current) => ({
+          ...current,
+          geofences: [...(current.geofences ?? []), { ...item, id: `geo-${Date.now()}` }],
+        })),
+      updateGeofence: (id, updates) =>
+        setState((current) => ({
+          ...current,
+          geofences: (current.geofences ?? []).map((g) => (g.id === id ? { ...g, ...updates } : g)),
+        })),
+      removeGeofence: (id) =>
+        setState((current) => ({
+          ...current,
+          geofences: (current.geofences ?? []).filter((g) => g.id !== id),
+        })),
+      addWifiShortcut: (item) =>
+        setState((current) => ({
+          ...current,
+          wifiShortcuts: [
+            ...(current.wifiShortcuts ?? []),
+            { ...item, id: `wifi-${Date.now()}` },
+          ],
+        })),
+      removeWifiShortcut: (id) =>
+        setState((current) => ({
+          ...current,
+          wifiShortcuts: (current.wifiShortcuts ?? []).filter((s) => s.id !== id),
+        })),
+      updateVehicle: (id, updates) =>
+        setState((current) => ({
+          ...current,
+          vehicles: current.vehicles.map((v) => (v.id === id ? { ...v, ...updates } : v)),
+        })),
+      removeVehicle: (id) =>
+        setState((current) => ({
+          ...current,
+          vehicles: current.vehicles.filter((v) => v.id !== id),
+          maintenanceItems: current.maintenanceItems.filter((m) => m.vehicleId !== id),
+        })),
+      assignDriverToVehicle: (vehicleId, driverId) =>
+        setState((current) => ({
+          ...current,
+          vehicles: current.vehicles.map((v) =>
+            v.id === vehicleId
+              ? { ...v, assignedDriverIds: [...new Set([...(v.assignedDriverIds ?? []), driverId])] }
+              : v,
+          ),
+          drivers: current.drivers.map((d) =>
+            d.id === driverId
+              ? { ...d, assignedVehicleIds: [...new Set([...(d.assignedVehicleIds ?? []), vehicleId])] }
+              : d,
+          ),
+        })),
+      removeDriverFromVehicle: (vehicleId, driverId) =>
+        setState((current) => ({
+          ...current,
+          vehicles: current.vehicles.map((v) =>
+            v.id === vehicleId
+              ? { ...v, assignedDriverIds: (v.assignedDriverIds ?? []).filter((id) => id !== driverId) }
+              : v,
+          ),
+          drivers: current.drivers.map((d) =>
+            d.id === driverId
+              ? { ...d, assignedVehicleIds: (d.assignedVehicleIds ?? []).filter((id) => id !== vehicleId) }
+              : d,
+          ),
+        })),
     }),
-    [hasServiceArea, notifications, serviceArea, state],
+    [hasServiceArea, notifications, serviceArea, serverSynced, forceSyncToServer, state],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

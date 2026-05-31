@@ -1,7 +1,8 @@
 "use client";
 
-import { CarFront } from "lucide-react";
-import { useState } from "react";
+import { CarFront, CheckCircle2, TriangleAlert, Wrench } from "lucide-react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 
 import { AddVehicleModal } from "@/components/forms/AddVehicleModal";
 import { Badge } from "@/components/ui/Badge";
@@ -14,17 +15,57 @@ export default function VehiclesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const { state } = useWorkspace();
 
+  const now = Date.now();
+
+  // Same dedup as dashboard: hide placeholder vehicles whose name is a claimed device ID
+  const claimedDeviceIds = useMemo(
+    () =>
+      new Set(
+        state.vehicles
+          .map((v) => v.deviceAssignment)
+          .filter((id): id is string => Boolean(id) && id !== "Not assigned"),
+      ),
+    [state.vehicles],
+  );
+
+  const visibleVehicles = useMemo(
+    () =>
+      state.vehicles.filter((v) => {
+        const isUnassigned = !v.deviceAssignment || v.deviceAssignment === "Not assigned";
+        if (!isUnassigned) return true;
+        return !claimedDeviceIds.has(v.name) && !claimedDeviceIds.has(v.id);
+      }),
+    [state.vehicles, claimedDeviceIds],
+  );
+
+  const maintSummary = useMemo(() => {
+    const dueIds = new Set<string>();
+    const upcomingIds = new Set<string>();
+    for (const item of state.maintenanceItems) {
+      if (!item.alertEnabled || item.intervalMonths === 0) continue;
+      const monthsSince = (now - new Date(item.lastServiceDate).getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+      if (monthsSince >= item.intervalMonths) dueIds.add(item.vehicleId);
+      else if (monthsSince >= item.intervalMonths * 0.85) upcomingIds.add(item.vehicleId);
+    }
+    return { dueIds, upcomingIds };
+  }, [state.maintenanceItems, now]);
+
   return (
     <div className="space-y-5">
-      <div>
-        <p className="text-sm font-semibold uppercase text-brand-forest">Vehicles</p>
-        <h1 className="mt-1 text-3xl font-bold text-brand-ink">Vehicles</h1>
-        <p className="mt-2 text-sm text-slate-500">
-          Add vehicles, keep records organized, and link each one to a tracker when it is ready.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold uppercase text-brand-forest">Vehicles</p>
+          <h1 className="mt-1 text-3xl font-bold text-brand-ink">Vehicles</h1>
+          <p className="mt-2 text-sm text-slate-500">
+            Add vehicles, keep records organized, and link each one to a tracker when it is ready.
+          </p>
+        </div>
+        {visibleVehicles.length > 0 && (
+          <Button onClick={() => setModalOpen(true)} className="shrink-0">Add Vehicle</Button>
+        )}
       </div>
 
-      {state.vehicles.length === 0 ? (
+      {visibleVehicles.length === 0 ? (
         <EmptyState
           title="No vehicles yet"
           description="Add the first vehicle to start building your live fleet registry."
@@ -33,50 +74,103 @@ export default function VehiclesPage() {
           icon={<CarFront size={22} />}
         />
       ) : (
-        <SectionCard className="overflow-hidden">
-          <div className="flex items-center justify-between border-b border-brand-line px-5 py-4">
-            <div>
-              <h2 className="text-base font-semibold text-brand-ink">Vehicle list</h2>
-              <p className="text-sm text-slate-500">
-                {state.vehicles.length} vehicle{state.vehicles.length !== 1 ? "s" : ""} in this account
+        <>
+          {/* Maintenance summary strip — visible when items are due */}
+          {(maintSummary.dueIds.size > 0 || maintSummary.upcomingIds.size > 0) && (
+            <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 ${
+              maintSummary.dueIds.size > 0
+                ? "border-red-200 bg-red-50"
+                : "border-amber-200 bg-amber-50"
+            }`}>
+              <Wrench size={16} className={maintSummary.dueIds.size > 0 ? "text-red-500 shrink-0" : "text-amber-500 shrink-0"} />
+              <p className={`text-sm font-medium ${maintSummary.dueIds.size > 0 ? "text-red-700" : "text-amber-700"}`}>
+                {maintSummary.dueIds.size > 0
+                  ? `${maintSummary.dueIds.size} vehicle${maintSummary.dueIds.size !== 1 ? "s have" : " has"} maintenance overdue`
+                  : `${maintSummary.upcomingIds.size} vehicle${maintSummary.upcomingIds.size !== 1 ? "s have" : " has"} maintenance due soon`}
               </p>
+              <Link href="/maintenance" className="ml-auto shrink-0 text-xs font-medium text-brand-navy hover:underline">
+                View →
+              </Link>
             </div>
-            <Button onClick={() => setModalOpen(true)}>Add Vehicle</Button>
+          )}
+
+          {/* Vehicle cards */}
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleVehicles.map((vehicle) => {
+              const isDue = maintSummary.dueIds.has(vehicle.id);
+              const isUpcoming = !isDue && maintSummary.upcomingIds.has(vehicle.id);
+              const dueItems = state.maintenanceItems.filter((m) => {
+                if (m.vehicleId !== vehicle.id || !m.alertEnabled || m.intervalMonths === 0) return false;
+                const ms = (now - new Date(m.lastServiceDate).getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+                return ms >= m.intervalMonths;
+              });
+
+              return (
+                <Link key={vehicle.id} href={`/vehicles/${vehicle.id}`}>
+                  <SectionCard className="p-4 hover:shadow-md transition-shadow cursor-pointer h-full">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-brand-ink truncate">{vehicle.name}</p>
+                        <p className="text-xs text-slate-500 truncate">
+                          {[vehicle.make, vehicle.model, String(vehicle.year)].filter(Boolean).join(" ")}
+                          {vehicle.plate ? ` · ${vehicle.plate}` : ""}
+                        </p>
+                      </div>
+                      <Badge tone={vehicle.deviceStatus} className="shrink-0">{vehicle.deviceStatus}</Badge>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {vehicle.deviceAssignment && vehicle.deviceAssignment !== "Not assigned" ? (
+                        <span className="rounded-full bg-brand-cloud border border-brand-line px-2 py-0.5 text-xs font-mono text-slate-600">
+                          {vehicle.deviceAssignment}
+                        </span>
+                      ) : (
+                        <span className="rounded-full border border-brand-line px-2 py-0.5 text-xs text-slate-400">
+                          No tracker
+                        </span>
+                      )}
+                      {isDue && (
+                        <span className="flex items-center gap-1 rounded-full bg-red-100 border border-red-200 px-2 py-0.5 text-xs font-medium text-red-600">
+                          <TriangleAlert size={10} />
+                          {dueItems.length} maintenance due
+                        </span>
+                      )}
+                      {isUpcoming && (
+                        <span className="flex items-center gap-1 rounded-full bg-amber-100 border border-amber-200 px-2 py-0.5 text-xs font-medium text-amber-600">
+                          <Wrench size={10} />
+                          Due soon
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Maintenance items preview */}
+                    {dueItems.length > 0 && (
+                      <div className="mt-3 space-y-1 border-t border-brand-line pt-3">
+                        {dueItems.slice(0, 2).map((item) => (
+                          <div key={item.id} className="flex items-center gap-1.5 text-xs text-red-600">
+                            <TriangleAlert size={10} />
+                            {item.label} overdue
+                          </div>
+                        ))}
+                        {dueItems.length > 2 && (
+                          <p className="text-xs text-slate-400">+{dueItems.length - 2} more</p>
+                        )}
+                      </div>
+                    )}
+
+                    {(!isDue && !isUpcoming) && (
+                      <div className="mt-3 flex items-center justify-end text-xs border-t border-brand-line pt-3">
+                        <span className="flex items-center gap-1 text-brand-forest">
+                          <CheckCircle2 size={11} /> Maintenance OK
+                        </span>
+                      </div>
+                    )}
+                  </SectionCard>
+                </Link>
+              );
+            })}
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-brand-cloud text-slate-500">
-                <tr>
-                  {["Vehicle", "Plate", "Type", "Region", "Tracker", "Status", "Last seen"].map((header) => (
-                    <th key={header} className="px-5 py-3 font-semibold">
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {state.vehicles.map((vehicle) => (
-                  <tr key={vehicle.id} className="border-t border-brand-line">
-                    <td className="px-5 py-4">
-                      <p className="font-semibold text-brand-ink">{vehicle.name}</p>
-                      <p className="text-xs text-slate-500">
-                        {vehicle.make} {vehicle.model} {vehicle.year}
-                      </p>
-                    </td>
-                    <td className="px-5 py-4 text-brand-text">{vehicle.plate}</td>
-                    <td className="px-5 py-4 text-brand-text">{vehicle.type}</td>
-                    <td className="px-5 py-4 text-brand-text">{vehicle.region}</td>
-                    <td className="px-5 py-4 text-brand-text">{vehicle.deviceAssignment}</td>
-                    <td className="px-5 py-4">
-                      <Badge tone={vehicle.deviceStatus}>{vehicle.deviceStatus}</Badge>
-                    </td>
-                    <td className="px-5 py-4 text-brand-text">{vehicle.lastSeen}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </SectionCard>
+        </>
       )}
 
       <AddVehicleModal open={modalOpen} onClose={() => setModalOpen(false)} />

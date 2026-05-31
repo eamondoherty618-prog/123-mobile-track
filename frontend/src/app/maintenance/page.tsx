@@ -95,6 +95,7 @@ function ItemRow({
   onDelete: () => void;
   onToggleAlert: () => void;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const { miles, loading } = useTripMilesSince(deviceId, item.lastServiceDate);
   const { status, milesInfo, timeInfo, progressPct } = getDueStatus(item, miles, loading);
   const Icon = TYPE_META[item.type].icon;
@@ -153,9 +154,16 @@ function ItemRow({
           <button onClick={onEdit} className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 text-slate-500 transition hover:bg-slate-200">
             <Wrench size={13} />
           </button>
-          <button onClick={onDelete} className="flex h-7 w-7 items-center justify-center rounded-md bg-red-50 text-red-400 transition hover:bg-red-100">
-            <Trash2 size={13} />
-          </button>
+          {confirmDelete ? (
+            <div className="flex flex-col gap-1">
+              <button onClick={onDelete} className="rounded px-1.5 py-0.5 text-xs font-semibold bg-red-100 text-red-600 hover:bg-red-200">Del</button>
+              <button onClick={() => setConfirmDelete(false)} className="rounded px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-600">No</button>
+            </div>
+          ) : (
+            <button onClick={() => setConfirmDelete(true)} className="flex h-7 w-7 items-center justify-center rounded-md bg-red-50 text-red-400 transition hover:bg-red-100">
+              <Trash2 size={13} />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -451,7 +459,7 @@ export default function MaintenancePage() {
           </div>
           <p className="text-base font-semibold text-brand-ink">No vehicles yet</p>
           <p className="mt-1 max-w-xs text-sm text-slate-500">
-            Add a vehicle on the Dashboard first, then track service history here.
+            Add a vehicle first, then track service history here.
           </p>
         </SectionCard>
       ) : (

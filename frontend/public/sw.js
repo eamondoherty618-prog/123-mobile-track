@@ -1,4 +1,4 @@
-const CACHE_NAME = "mobile-track-shell-v2";
+const CACHE_NAME = "mobile-track-shell-v5";
 const APP_SHELL = [
   "/",
   "/dashboard",
@@ -23,11 +23,18 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
-    ),
+    (async () => {
+      await self.clients.claim();
+      const keys = await caches.keys();
+      const stale = keys.filter((key) => key !== CACHE_NAME);
+      if (stale.length > 0) {
+        await Promise.all(stale.map((key) => caches.delete(key)));
+        // Force all open pages to reload so they pick up the new JS immediately.
+        const openClients = await self.clients.matchAll({ type: "window" });
+        await Promise.all(openClients.map((c) => c.navigate(c.url)));
+      }
+    })(),
   );
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", (event) => {
@@ -65,5 +72,38 @@ self.addEventListener("fetch", (event) => {
         return response;
       })
       .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/dashboard"))),
+  );
+});
+
+self.addEventListener("push", (event) => {
+  let data = { title: "Fleet alert", body: "A new alert fired.", url: "/alerts" };
+  try {
+    data = Object.assign(data, JSON.parse(event.data.text()));
+  } catch {}
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: "/123-mobile-track-logo.png",
+      badge: "/123-mobile-track-logo.png",
+      data: { url: data.url },
+      tag: "fleet-alert",
+      renotify: true,
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url ?? "/alerts";
+  event.waitUntil(
+    clients.matchAll({ type: "window" }).then((clientList) => {
+      const existing = clientList.find((c) => c.url.includes(self.location.origin) && "focus" in c);
+      if (existing) {
+        existing.focus();
+        existing.navigate(url);
+      } else {
+        clients.openWindow(url);
+      }
+    }),
   );
 });

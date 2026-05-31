@@ -12,7 +12,7 @@ import {
   SlidersHorizontal,
   Truck,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 import { AddVehicleModal } from "@/components/forms/AddVehicleModal";
@@ -20,7 +20,8 @@ import { SetupWorkspaceModal } from "@/components/forms/SetupWorkspaceModal";
 import { MapView } from "@/components/map/MapView";
 import { Button } from "@/components/ui/Button";
 import { SectionCard } from "@/components/ui/SectionCard";
-import { LiveTrackerPacket, useAllTrackers, useLiveTracker } from "@/lib/liveTracker";
+import { LiveTrackerPacket, useAllTrackers } from "@/lib/liveTracker";
+import { useAllTrips, useAllAlerts, kmToMiles } from "@/lib/fleetHistory";
 import { useWorkspace } from "@/lib/workspace";
 import { Vehicle } from "@/types";
 
@@ -30,6 +31,14 @@ function VehicleTypeIcon({ type, ...props }: { type: string } & Parameters<typeo
   if (lower.includes("truck") || lower.includes("van") || lower.includes("trailer") || lower.includes("box"))
     return <Truck {...props} />;
   return <Car {...props} />;
+}
+
+function formatStoppedSince(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const isToday = d.toDateString() === now.toDateString();
+  return isToday ? `Here since ${time}` : `Here since ${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
 }
 
 function formatRelativeTime(iso: string | undefined): string {
@@ -43,9 +52,11 @@ function formatRelativeTime(iso: string | undefined): string {
 function VehicleCard({
   vehicle,
   tracker,
+  onClick,
 }: {
   vehicle: Vehicle;
   tracker: LiveTrackerPacket | null;
+  onClick?: () => void;
 }) {
   const speedMph = Math.round(Number(tracker?.gps?.speed_kph ?? 0) * 0.621371);
   const isMoving = speedMph > 3;
@@ -88,8 +99,13 @@ function VehicleCard({
     ? "text-slate-600"
     : "text-slate-400";
 
+  const hasLocation = Boolean(tracker?.has_fix || tracker?.last_gps);
+
   return (
-    <div className="flex items-center gap-3 px-4 py-3.5 hover:bg-brand-cloud/40 transition-colors">
+    <div
+      className={`flex items-center gap-3 px-4 py-3.5 transition-colors ${hasLocation ? "cursor-pointer hover:bg-brand-cloud/60 active:bg-brand-cloud" : "hover:bg-brand-cloud/40"}`}
+      onClick={hasLocation ? onClick : undefined}
+    >
       {/* Avatar */}
       <div className="relative shrink-0">
         <div className="h-12 w-12 overflow-hidden rounded-full border-2 border-brand-line bg-brand-cloud flex items-center justify-center">
@@ -99,7 +115,7 @@ function VehicleCard({
             <VehicleTypeIcon type={vehicle.type} size={20} className="text-brand-navy" />
           )}
         </div>
-        <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white ${dotColor}`} />
+        <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white ${dotColor} ${isMoving ? "animate-pulse" : ""}`} />
       </div>
 
       {/* Info */}
@@ -123,7 +139,10 @@ function VehicleCard({
                 {signalPct}%
               </span>
             )}
-            <span>{formatRelativeTime(tracker?.received_at)}</span>
+            {!isMoving && tracker?.stopped_since
+              ? <span>{formatStoppedSince(tracker.stopped_since)}</span>
+              : <span>{formatRelativeTime(tracker?.received_at)}</span>
+            }
           </div>
         )}
       </div>
@@ -131,27 +150,81 @@ function VehicleCard({
   );
 }
 
+function useSecondsTick() {
+  const [secs, setSecs] = useState(0);
+  const ref = useRef(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setSecs(Math.floor((Date.now() - ref.current) / 1000)), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const reset = () => { ref.current = Date.now(); setSecs(0); };
+  return { secs, reset };
+}
+
 export default function DashboardPage() {
   const { state, hasServiceArea, serviceArea } = useWorkspace();
   const allTrackers = useAllTrackers();
   const [companyOpen, setCompanyOpen] = useState(false);
   const [addVehicleOpen, setAddVehicleOpen] = useState(false);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | undefined>(undefined);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const { secs, reset } = useSecondsTick();
+
+  const deviceIds = useMemo(
+    () => state.vehicles.map((v) => v.deviceAssignment).filter((id): id is string => Boolean(id) && id !== "Not assigned"),
+    [state.vehicles],
+  );
+  const { trips } = useAllTrips(deviceIds);
+  const { alerts } = useAllAlerts(deviceIds);
+
+  const weekAgo = useMemo(() => new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), []);
+  const weeklyTrips = useMemo(() => trips.filter((t) => t.start_time >= weekAgo), [trips, weekAgo]);
+  const weeklyMiles = useMemo(() => Math.round(weeklyTrips.reduce((s, t) => s + kmToMiles(t.distance_km), 0)), [weeklyTrips]);
+  const weeklyEvents = useMemo(() => alerts.filter((a) => a.time >= weekAgo).length, [alerts, weekAgo]);
+
+  // Reset the "updated ago" counter whenever trackers refresh
+  const prevTrackerCount = useRef(0);
+  useEffect(() => {
+    if (allTrackers.length !== prevTrackerCount.current || allTrackers.length > 0) {
+      prevTrackerCount.current = allTrackers.length;
+      reset();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allTrackers]);
 
   const trackerMap = useMemo(
     () => Object.fromEntries(allTrackers.map((t) => [t.device_id, t])),
     [allTrackers],
   );
 
+  // Device IDs that are already claimed by a real vehicle.
+  const claimedDeviceIds = useMemo(
+    () =>
+      new Set(
+        state.vehicles
+          .map((v) => v.deviceAssignment)
+          .filter((id): id is string => Boolean(id) && id !== "Not assigned"),
+      ),
+    [state.vehicles],
+  );
+
   const vehiclesWithLiveData = useMemo(
     () =>
-      state.vehicles.map((v) => ({
-        ...v,
-        tracker:
-          v.deviceAssignment && v.deviceAssignment !== "Not assigned"
-            ? (trackerMap[v.deviceAssignment] ?? null)
-            : null,
-      })),
-    [state.vehicles, trackerMap],
+      state.vehicles
+        // Hide placeholder vehicles whose name is a device ID already assigned to another vehicle.
+        .filter((v) => {
+          const isUnassigned = !v.deviceAssignment || v.deviceAssignment === "Not assigned";
+          if (!isUnassigned) return true;
+          return !claimedDeviceIds.has(v.name) && !claimedDeviceIds.has(v.id);
+        })
+        .map((v) => ({
+          ...v,
+          tracker:
+            v.deviceAssignment && v.deviceAssignment !== "Not assigned"
+              ? (trackerMap[v.deviceAssignment] ?? null)
+              : null,
+        })),
+    [state.vehicles, trackerMap, claimedDeviceIds],
   );
 
   const movingCount = vehiclesWithLiveData.filter(
@@ -211,7 +284,25 @@ export default function DashboardPage() {
       </div>
 
       {/* Map — takes up the full width, prominent */}
-      <MapView />
+      <div ref={mapRef}>
+        <MapView selectedVehicleId={selectedVehicleId} onSelectVehicle={setSelectedVehicleId} />
+      </div>
+
+      {/* Weekly summary */}
+      {weeklyTrips.length > 0 && (
+        <SectionCard className="grid grid-cols-3 divide-x divide-brand-line overflow-hidden">
+          {[
+            { label: "Trips this week", value: String(weeklyTrips.length) },
+            { label: "Miles driven", value: weeklyMiles.toLocaleString() },
+            { label: "Driving events", value: String(weeklyEvents) },
+          ].map(({ label, value }) => (
+            <div key={label} className="px-4 py-3 sm:px-5">
+              <p className="text-xs text-slate-500">{label}</p>
+              <p className="text-lg font-bold text-brand-ink sm:text-xl">{value}</p>
+            </div>
+          ))}
+        </SectionCard>
+      )}
 
       {/* Fleet status */}
       <SectionCard className="overflow-hidden">
@@ -223,6 +314,7 @@ export default function DashboardPage() {
                 ? `${state.vehicles.length} vehicle${state.vehicles.length > 1 ? "s" : ""}`
                 : "No vehicles yet"}
               {allTrackers.length > 0 ? ` · ${allTrackers.length} tracker${allTrackers.length > 1 ? "s" : ""} online` : ""}
+              {" · "}<span className={secs > 20 ? "text-amber-500" : "text-slate-400"}>updated {secs}s ago</span>
             </p>
           </div>
           {state.vehicles.length > 0 && (
@@ -238,7 +330,15 @@ export default function DashboardPage() {
         {vehiclesWithLiveData.length > 0 ? (
           <div className="divide-y divide-brand-line">
             {vehiclesWithLiveData.map((v) => (
-              <VehicleCard key={v.id} vehicle={v} tracker={v.tracker} />
+              <VehicleCard
+                key={v.id}
+                vehicle={v}
+                tracker={v.tracker}
+                onClick={() => {
+                  setSelectedVehicleId(v.id);
+                  mapRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }}
+              />
             ))}
           </div>
         ) : (
@@ -248,12 +348,9 @@ export default function DashboardPage() {
             </div>
             <p className="text-sm font-semibold text-brand-ink">No vehicles yet</p>
             <p className="mt-1 text-xs text-slate-500">Add a vehicle to see live status here</p>
-            <button
-              onClick={() => setAddVehicleOpen(true)}
-              className="mt-4 rounded-lg bg-brand-navy px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-forest"
-            >
-              Add first vehicle
-            </button>
+            <Button onClick={() => setAddVehicleOpen(true)} className="mt-4">
+              Add vehicle
+            </Button>
           </div>
         )}
       </SectionCard>

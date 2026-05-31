@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Route } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, Route } from "lucide-react";
 
 import { SectionCard } from "@/components/ui/SectionCard";
 import {
@@ -186,14 +186,46 @@ export default function TripsPage() {
     return trips.filter((t) => t.device_id === vehicle.deviceAssignment);
   }, [trips, selectedVehicleId, assignedVehicles]);
 
+  function exportCsv() {
+    const rows = [
+      ["Vehicle", "Date", "Start time", "Duration", "Miles", "Max speed (mph)", "Avg speed (mph)", "Events"].join(","),
+      ...filteredTrips.map((t) => [
+        `"${deviceToVehicleName[t.device_id] ?? t.device_id}"`,
+        formatDate(t.start_time),
+        formatTime(t.start_time),
+        formatDuration(t.duration_s),
+        kmToMiles(t.distance_km).toFixed(1),
+        Math.round(kphToMph(t.max_speed_kph)),
+        Math.round(kphToMph(t.avg_speed_kph)),
+        t.event_count,
+      ].join(",")),
+    ];
+    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `trips-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+  }
+
   return (
     <div className="space-y-5">
-      <div>
-        <p className="text-sm font-semibold uppercase text-brand-forest">Trips</p>
-        <h1 className="mt-1 text-3xl font-bold text-brand-ink">Trips</h1>
-        <p className="mt-2 text-sm text-slate-500">
-          Route history, mileage, and driving events across all vehicles.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase text-brand-forest">Trips</p>
+          <h1 className="mt-1 text-3xl font-bold text-brand-ink">Trips</h1>
+          <p className="mt-2 text-sm text-slate-500">
+            Route history, mileage, and driving events across all vehicles.
+          </p>
+        </div>
+        {filteredTrips.length > 0 && (
+          <button
+            onClick={exportCsv}
+            className="mt-1 flex shrink-0 items-center gap-1.5 rounded-lg border border-brand-line bg-white px-3 py-2 text-sm font-medium text-brand-ink transition hover:bg-brand-cloud"
+          >
+            <Download size={14} />
+            Export CSV
+          </button>
+        )}
       </div>
 
       {/* Vehicle filter tabs */}

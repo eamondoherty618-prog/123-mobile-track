@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">123 Mobile Track</string>
+    <string name="title_activity_main">123 Mobile Track</string>
+    <string name="package_name">com.mobiletrack123.app</string>
+    <string name="custom_url_scheme">com.mobiletrack123.app</string>
+</resources>

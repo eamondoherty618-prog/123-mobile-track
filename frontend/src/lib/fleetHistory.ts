@@ -55,7 +55,7 @@ export type FleetAlert = {
   lon: number | null;
 };
 
-export function useTrips(deviceId = "tracker-001") {
+export function useTrips(deviceId: string) {
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,14 +84,14 @@ export function useTrips(deviceId = "tracker-001") {
   return { trips, loading, error };
 }
 
-export async function fetchTripDetail(tripId: string, deviceId = "tracker-001"): Promise<TripDetail> {
+export async function fetchTripDetail(tripId: string, deviceId: string): Promise<TripDetail> {
   const res = await fetch(`${API_BASE}/api/fleet/trips/${tripId}?device_id=${deviceId}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json() as { ok: boolean; trip: TripSummary; route: RoutePoint[] };
   return { trip: data.trip, route: data.route };
 }
 
-export function useAlerts(deviceId = "tracker-001") {
+export function useAlerts(deviceId: string) {
   const [alerts, setAlerts] = useState<FleetAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -113,9 +113,13 @@ export function useAlerts(deviceId = "tracker-001") {
         if (!cancelled) setLoading(false);
       }
     }
+    function onVisible() {
+      if (!document.hidden) load();
+    }
     load();
-    const iv = window.setInterval(load, 30000);
-    return () => { cancelled = true; window.clearInterval(iv); };
+    const iv = window.setInterval(load, 120000);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { cancelled = true; window.clearInterval(iv); document.removeEventListener("visibilitychange", onVisible); };
   }, [deviceId]);
 
   return { alerts, loading, error };
@@ -250,9 +254,13 @@ export function useAllAlerts(deviceIds: string[]) {
         if (!cancelled) setLoading(false);
       }
     }
+    function onVisible() {
+      if (!document.hidden) load();
+    }
     load();
-    const iv = window.setInterval(load, 30000);
-    return () => { cancelled = true; window.clearInterval(iv); };
+    const iv = window.setInterval(load, 120000);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { cancelled = true; window.clearInterval(iv); document.removeEventListener("visibilitychange", onVisible); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 

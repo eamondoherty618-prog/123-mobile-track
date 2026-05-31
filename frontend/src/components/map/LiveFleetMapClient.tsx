@@ -2,8 +2,8 @@
 
 import "leaflet/dist/leaflet.css";
 
-import { divIcon } from "leaflet";
-import { useEffect, useRef } from "react";
+import { createVehicleMapIcon } from "@/lib/vehicleMapIcon";
+import { useEffect, useMemo, useRef } from "react";
 import { MapContainer, Marker, TileLayer, Tooltip, ZoomControl, useMap } from "react-leaflet";
 
 import { useAllTrackers } from "@/lib/liveTracker";
@@ -12,6 +12,25 @@ import { MaintenanceItem } from "@/types";
 
 import { SectionCard } from "../ui/SectionCard";
 
+// Fly to a selected vehicle whenever selectedVehicleId changes.
+function FlyToVehicle({
+  selectedVehicleId,
+  markers,
+}: {
+  selectedVehicleId?: string;
+  markers: Array<{ vehicleId?: string; id: string; point: [number, number] }>;
+}) {
+  const map = useMap();
+  const prevId = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!selectedVehicleId || selectedVehicleId === prevId.current) return;
+    prevId.current = selectedVehicleId;
+    const marker = markers.find((m) => m.vehicleId === selectedVehicleId || m.id === selectedVehicleId);
+    if (marker) map.flyTo(marker.point, Math.max(map.getZoom(), 15), { duration: 0.8 });
+  }, [selectedVehicleId, markers, map]);
+  return null;
+}
+
 // Fit map to all GPS markers the first time they appear, then leave it alone.
 function FitBoundsOnce({ points }: { points: [number, number][] }) {
   const map = useMap();
@@ -19,41 +38,15 @@ function FitBoundsOnce({ points }: { points: [number, number][] }) {
   useEffect(() => {
     if (hasFit.current || points.length === 0) return;
     if (points.length === 1) {
-      map.setView(points[0], 14);
+      map.setView(points[0], 16);
     } else {
-      map.fitBounds(points as [number, number][], { padding: [50, 50], maxZoom: 15 });
+      map.fitBounds(points as [number, number][], { padding: [60, 60], maxZoom: 16 });
     }
     hasFit.current = true;
   });
   return null;
 }
 
-function maintDueBadge(due: boolean): string {
-  if (!due) return "";
-  return `<div style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#f97316;border:2px solid white;display:flex;align-items:center;justify-content:center;font-size:8px;line-height:1">⚙</div>`;
-}
-
-function dotIcon(color: string, size = 16, maintDue = false) {
-  const half = size / 2;
-  const outer = size + 8;
-  return divIcon({
-    className: "",
-    html: `<div style="position:relative;width:${outer}px;height:${outer}px"><div style="position:absolute;top:4px;left:4px;width:${size}px;height:${size}px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.25)"></div>${maintDueBadge(maintDue)}</div>`,
-    iconSize: [outer, outer],
-    iconAnchor: [outer / 2, outer / 2],
-  });
-}
-
-function photoIcon(photo: string, color: string, size = 40, maintDue = false) {
-  const half = size / 2;
-  const outer = size + 8;
-  return divIcon({
-    className: "",
-    html: `<div style="position:relative;width:${outer}px;height:${outer}px"><div style="position:absolute;top:4px;left:4px;width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;border:3px solid ${color};box-shadow:0 2px 10px rgba(0,0,0,0.3)"><img src="${photo}" style="width:100%;height:100%;object-fit:cover"/></div>${maintDueBadge(maintDue)}</div>`,
-    iconSize: [outer, outer],
-    iconAnchor: [outer / 2, outer / 2],
-  });
-}
 
 function isMaintenanceDue(items: MaintenanceItem[]): boolean {
   const now = Date.now();
@@ -98,6 +91,8 @@ export function LiveFleetMapClient({
         vehicleId: vehicle?.id,
         name: vehicle?.name ?? t.device_id,
         photo: vehicle?.photo,
+        color: vehicle?.color,
+        type: vehicle?.type ?? "Car",
         point: [Number(t.gps!.lat), Number(t.gps!.lon)] as [number, number],
         speedMph,
         selected,
@@ -105,18 +100,42 @@ export function LiveFleetMapClient({
       };
     });
 
-  const hasGps = liveMarkers.length > 0;
-  const center: [number, number] = liveMarkers[0]?.point ?? serviceArea.center;
+  // Vehicles without current fix but with a last-known location
+  const lastKnownMarkers = allTrackers
+    .filter((t) => !t.has_fix && t.last_gps?.lat && t.last_gps?.lon)
+    .map((t) => {
+      const vehicle = state.vehicles.find((v) => v.deviceAssignment === t.device_id);
+      return {
+        id: t.device_id,
+        vehicleId: vehicle?.id,
+        name: vehicle?.name ?? t.device_id,
+        photo: vehicle?.photo,
+        color: vehicle?.color,
+        type: vehicle?.type ?? "Car",
+        point: [Number(t.last_gps!.lat), Number(t.last_gps!.lon)] as [number, number],
+        time: t.last_gps?.time,
+      };
+    });
 
-  // Status rows for overlay (all trackers, GPS or not)
-  const statusRows = allTrackers.map((t) => {
-    const vehicle = state.vehicles.find((v) => v.deviceAssignment === t.device_id);
-    const name = vehicle?.name ?? t.device_id;
-    const live = Boolean(t.has_fix && t.gps?.lat && t.gps?.lon);
-    const online = isRecentReport(t.received_at);
-    const speedMph = live ? Math.round(Number(t.gps?.speed_kph ?? 0) * 0.621371) : 0;
-    return { id: t.device_id, name, live, online, speedMph };
-  });
+  const hasGps = liveMarkers.length > 0;
+  const center: [number, number] = liveMarkers[0]?.point ?? lastKnownMarkers[0]?.point ?? serviceArea.center;
+
+  // Status rows for overlay — one row per tracker, labelled by vehicle name if assigned.
+  // Deduplicate: if two trackers resolve to the same vehicle name, only keep the one that's live.
+  const statusRows = useMemo(() => {
+    const rows = allTrackers.map((t) => {
+      const vehicle = state.vehicles.find((v) => v.deviceAssignment === t.device_id);
+      const name = vehicle?.name ?? t.device_id;
+      const live = Boolean(t.has_fix && t.gps?.lat && t.gps?.lon);
+      const online = isRecentReport(t.received_at);
+      const speedMph = live ? Math.round(Number(t.gps?.speed_kph ?? 0) * 0.621371) : 0;
+      return { id: t.device_id, name, live, online, speedMph, hasVehicle: Boolean(vehicle) };
+    });
+    // If a tracker is unassigned (no vehicle) but its device_id matches a name already
+    // shown by an assigned tracker, skip it to avoid duplicate labels.
+    const assignedNames = new Set(rows.filter((r) => r.hasVehicle).map((r) => r.name));
+    return rows.filter((r) => r.hasVehicle || !assignedNames.has(r.id));
+  }, [allTrackers, state.vehicles]);
 
   return (
     <SectionCard className="overflow-hidden">
@@ -139,6 +158,10 @@ export function LiveFleetMapClient({
         >
           <ZoomControl position="bottomright" />
           <FitBoundsOnce points={liveMarkers.map((m) => m.point)} />
+          <FlyToVehicle
+            selectedVehicleId={selectedVehicleId}
+            markers={[...liveMarkers, ...lastKnownMarkers]}
+          />
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -148,11 +171,15 @@ export function LiveFleetMapClient({
             <Marker
               key={m.id}
               position={m.point}
-              icon={
-                m.photo
-                  ? photoIcon(m.photo, m.selected ? "#15803d" : "#173754", 40, m.maintDue)
-                  : dotIcon(m.selected ? "#15803d" : "#173754", 16, m.maintDue)
-              }
+              icon={createVehicleMapIcon({
+                vehicleType: m.type,
+                vehicleColor: m.color,
+                photo: m.photo,
+                isMoving: m.speedMph > 3,
+                isOnline: true,
+                selected: m.selected,
+                maintDue: m.maintDue,
+              })}
               eventHandlers={{
                 click: () => onSelectVehicle?.(m.vehicleId ?? m.id),
               }}
@@ -162,6 +189,36 @@ export function LiveFleetMapClient({
                   <p className="font-semibold">{m.name}</p>
                   <p className="text-slate-500">
                     {m.speedMph > 3 ? `${m.speedMph} mph` : "Stopped"} · Live GPS
+                  </p>
+                </div>
+              </Tooltip>
+            </Marker>
+          ))}
+
+          {lastKnownMarkers.map((m) => (
+            <Marker
+              key={`last-${m.id}`}
+              position={m.point}
+              opacity={0.5}
+              icon={createVehicleMapIcon({
+                vehicleType: m.type,
+                vehicleColor: m.color,
+                photo: m.photo,
+                isMoving: false,
+                isOnline: false,
+              })}
+              eventHandlers={{
+                click: () => onSelectVehicle?.(m.vehicleId ?? m.id),
+              }}
+            >
+              <Tooltip direction="top" offset={[0, -12]} opacity={1} permanent={false}>
+                <div className="text-xs leading-snug">
+                  <p className="font-semibold">{m.name}</p>
+                  <p className="text-slate-500">
+                    Last known ·{" "}
+                    {m.time
+                      ? new Date(m.time).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                      : "unknown time"}
                   </p>
                 </div>
               </Tooltip>

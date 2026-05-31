@@ -51,15 +51,18 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!loaded) return;
-    if (pathname === "/login" && user) {
+    const publicPaths = ["/login", "/onboarding", "/privacy"];
+    if (publicPaths.includes(pathname) && user) {
       router.replace("/dashboard");
-    } else if (pathname !== "/login" && !user) {
-      router.replace("/login");
+    } else if (!publicPaths.includes(pathname) && !user) {
+      const search = typeof window !== "undefined" ? window.location.search : "";
+      const next = encodeURIComponent(pathname + search);
+      router.replace(`/login?next=${next}`);
     }
   }, [loaded, pathname, user, router]);
 
-  // Login page gets its own bare layout
-  if (pathname === "/login") {
+  // Login and onboarding pages get their own bare layout
+  if (pathname === "/login" || pathname === "/onboarding" || pathname === "/privacy") {
     return <>{children}</>;
   }
 

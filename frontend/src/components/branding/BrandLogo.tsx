@@ -28,7 +28,7 @@ export function BrandLogo({ collapsed = false, className }: BrandLogoProps) {
           src="/123-mobile-track-logo.png"
           alt="123 Mobile Track logo"
           fill
-          className="object-cover"
+          className="object-contain scale-[1.5]"
           priority
         />
       </div>

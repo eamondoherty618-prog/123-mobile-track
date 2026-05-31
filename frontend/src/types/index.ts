@@ -11,6 +11,13 @@ export interface LocationPoint {
   label: string;
 }
 
+export interface VehicleAlertThresholds {
+  speedingMph: number;       // 0 = disabled
+  hardBrakeEnabled: boolean;
+  rapidAccelEnabled: boolean;
+  gpsOfflineMinutes: number; // 0 = disabled; fires when tracker reconnects after this gap
+}
+
 export interface Vehicle {
   id: string;
   name: string;
@@ -21,7 +28,8 @@ export interface Vehicle {
   model: string;
   year: number;
   type: string;
-  assignedDriver: string;
+  assignedDriver: string;       // legacy — use assignedDriverIds
+  assignedDriverIds: string[];  // driver IDs
   region: string;
   status: VehicleStatus;
   gpsOnline: boolean;
@@ -35,6 +43,8 @@ export interface Vehicle {
   deviceAssignment: string;
   location: LocationPoint;
   photo?: string;
+  color?: string;
+  alertThresholds?: VehicleAlertThresholds;
 }
 
 export interface Device {
@@ -62,7 +72,8 @@ export interface Driver {
   id: string;
   name: string;
   phone: string;
-  assignedVehicle: string;
+  assignedVehicle: string;        // legacy — use assignedVehicleIds
+  assignedVehicleIds: string[];   // vehicle IDs
   status: "on-route" | "available" | "off-duty";
   region: string;
   license: string;
@@ -94,9 +105,13 @@ export interface FleetAlert {
 export interface Geofence {
   id: string;
   name: string;
-  region: string;
-  vehiclesInside: number;
-  rule: string;
+  lat: number;
+  lon: number;
+  radiusM: number;
+  triggerOn: "enter" | "exit" | "both";
+  alertEnabled: boolean;
+  notes: string;
+  vehicleIds?: string[];  // empty / undefined = applies to all vehicles
 }
 
 export type MaintenanceType =

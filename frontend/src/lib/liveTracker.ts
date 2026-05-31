@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react"; // useState used by useAllTrackers, useMemo by useSetupChecklist
 
+import { getStoredToken } from "@/lib/auth";
 import { Device } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
-export const LIVE_TRACKER_ENDPOINT = `${API_BASE}/api/fleet/telemetry?device_id=tracker-001`;
 
 export type LiveTrackerPacket = {
   device_id: string;
   has_fix?: boolean;
+  fix_source?: string;
   battery_mv?: number;
   cell_rssi?: number;
   firmware?: string;
@@ -19,18 +20,32 @@ export type LiveTrackerPacket = {
     speed_kph?: number | string;
     timestamp?: string;
   };
+  last_gps?: {
+    lat: number | string;
+    lon: number | string;
+    time?: string;
+    source?: string;
+  };
   motion_state?: string;
   queued_messages?: number;
   received_at?: string;
+  stopped_since?: string | null;
 };
 
 export function useAllTrackers() {
   const [trackers, setTrackers] = useState<LiveTrackerPacket[]>([]);
   useEffect(() => {
     let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
     async function load() {
+      if (document.hidden) return; // skip when tab is backgrounded
       try {
-        const res = await fetch(`${API_BASE}/api/fleet/latest`, { cache: "no-store" });
+        const token = getStoredToken();
+        const res = await fetch(`${API_BASE}/api/fleet/latest`, {
+          cache: "no-store",
+          headers: token ? { authorization: `Bearer ${token}` } : {},
+        });
         if (!res.ok) return;
         const body = (await res.json()) as { ok: boolean; devices?: Record<string, LiveTrackerPacket> };
         if (!cancelled && body.devices) setTrackers(Object.values(body.devices));
@@ -38,69 +53,24 @@ export function useAllTrackers() {
         // non-fatal
       }
     }
+
+    function onVisible() {
+      if (!document.hidden) load(); // fetch immediately when tab comes back into focus
+    }
+
     load();
-    const id = window.setInterval(load, 15000);
-    return () => { cancelled = true; window.clearInterval(id); };
+    intervalId = window.setInterval(load, 60000); // poll every 60 s instead of 15 s
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      if (intervalId) window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
   return trackers;
 }
 
-export type LiveTracker = {
-  battery_mv?: number;
-  cell_rssi?: number;
-  device_id?: string;
-  firmware?: string;
-  gps?: {
-    lat?: number | string;
-    lon?: number | string;
-    speed_kph?: number | string;
-    timestamp?: string;
-  };
-  has_fix?: boolean;
-  motion_state?: string;
-  queued_messages?: number;
-  received_at?: string;
-};
-
-export function useLiveTracker() {
-  const [liveTracker, setLiveTracker] = useState<LiveTracker | null>(null);
-  const [liveError, setLiveError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadLiveTracker() {
-      try {
-        const response = await fetch(LIVE_TRACKER_ENDPOINT, { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const body = (await response.json()) as { ok: boolean; device?: LiveTracker };
-        if (!cancelled) {
-          setLiveTracker(body.device ?? null);
-          setLiveError(null);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setLiveError(error instanceof Error ? error.message : "Unable to load live tracker");
-        }
-      }
-    }
-
-    loadLiveTracker();
-    const interval = window.setInterval(loadLiveTracker, 15000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, []);
-
-  return { liveTracker, liveError };
-}
-
-export function buildPrototypeDevice(liveTracker: LiveTracker | null): Device {
+export function buildPrototypeDevice(liveTracker: LiveTrackerPacket | null): Device {
   const signalStrength = Math.max(
     0,
     Math.min(100, Math.round(((liveTracker?.cell_rssi ?? 0) / 31) * 100)),
@@ -139,7 +109,7 @@ export function buildPrototypeDevice(liveTracker: LiveTracker | null): Device {
 }
 
 export function useSetupChecklist(
-  liveTracker: LiveTracker | null,
+  liveTracker: LiveTrackerPacket | null,
   liveError: string | null,
   vehicleCount: number,
   trackerAssigned: boolean,

@@ -27,7 +27,7 @@ export function AddDriverModal({
   const canSubmit = form.name.trim().length > 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-brand-ink/45 px-4">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-brand-ink/45 px-4">
       <div className="w-full max-w-xl rounded-lg bg-white shadow-panel">
         <div className="flex items-center justify-between border-b border-brand-line px-6 py-4">
           <div>
