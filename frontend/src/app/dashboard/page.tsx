@@ -14,15 +14,17 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { AddVehicleModal } from "@/components/forms/AddVehicleModal";
 import { SetupWorkspaceModal } from "@/components/forms/SetupWorkspaceModal";
 import { MapView } from "@/components/map/MapView";
 import { Button } from "@/components/ui/Button";
 import { SectionCard } from "@/components/ui/SectionCard";
-import { LiveTrackerPacket, useAllTrackers } from "@/lib/liveTracker";
+import { LiveTrackerPacket } from "@/lib/liveTracker";
 import { useAllTrips, useAllAlerts, kmToMiles } from "@/lib/fleetHistory";
 import { useWorkspace } from "@/lib/workspace";
+import { canManageFleet, isDriver } from "@/lib/permissions";
 import { Vehicle } from "@/types";
 
 function VehicleTypeIcon({ type, ...props }: { type: string } & Parameters<typeof Car>[0]) {
@@ -53,13 +55,16 @@ function VehicleCard({
   vehicle,
   tracker,
   onClick,
+  onNoGpsClick,
 }: {
   vehicle: Vehicle;
   tracker: LiveTrackerPacket | null;
   onClick?: () => void;
+  onNoGpsClick?: () => void;
 }) {
   const speedMph = Math.round(Number(tracker?.gps?.speed_kph ?? 0) * 0.621371);
-  const isMoving = speedMph > 3;
+  const stoppedSinceMs = tracker?.stopped_since ? Date.now() - new Date(tracker.stopped_since).getTime() : Infinity;
+  const isMoving = tracker?.motion_state === "moving" || stoppedSinceMs < 3 * 60 * 1000;
   const isOnline = Boolean(tracker?.received_at);
   const hasGps = Boolean(tracker?.has_fix);
   const hasTracker = vehicle.deviceAssignment && vehicle.deviceAssignment !== "Not assigned";
@@ -73,20 +78,26 @@ function VehicleCard({
       ? Math.max(0, Math.min(100, Math.round(((tracker.cell_rssi) / 31) * 100)))
       : null;
 
+  const ignitionOn = Boolean(tracker?.ignition_on);
+
   const dotColor = !hasTracker
     ? "bg-slate-200"
     : isMoving
     ? "bg-green-500"
+    : ignitionOn
+    ? "bg-amber-400"
     : isOnline && hasGps
     ? "bg-brand-navy"
     : isOnline
-    ? "bg-amber-400"
+    ? "bg-slate-400"
     : "bg-slate-300";
 
   const statusLabel = !hasTracker
     ? "No tracker"
     : isMoving
     ? `${speedMph} mph`
+    : ignitionOn
+    ? "Engine running"
     : isOnline
     ? "Stopped"
     : "Offline";
@@ -99,12 +110,13 @@ function VehicleCard({
     ? "text-slate-600"
     : "text-slate-400";
 
-  const hasLocation = Boolean(tracker?.has_fix || tracker?.last_gps);
+  const hasLiveLocation = Boolean(tracker?.has_fix || tracker?.last_gps);
+  const hasStoredLocation = Boolean(vehicle.location?.lat && vehicle.location?.lng);
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3.5 transition-colors ${hasLocation ? "cursor-pointer hover:bg-brand-cloud/60 active:bg-brand-cloud" : "hover:bg-brand-cloud/40"}`}
-      onClick={hasLocation ? onClick : undefined}
+      className="flex items-center gap-3 px-4 py-3.5 transition-colors cursor-pointer hover:bg-brand-cloud/60 active:bg-brand-cloud"
+      onClick={hasLiveLocation ? onClick : (hasStoredLocation || hasTracker ? onNoGpsClick : undefined)}
     >
       {/* Avatar */}
       <div className="relative shrink-0">
@@ -162,8 +174,10 @@ function useSecondsTick() {
 }
 
 export default function DashboardPage() {
-  const { state, hasServiceArea, serviceArea } = useWorkspace();
-  const allTrackers = useAllTrackers();
+  const { state, hasServiceArea, serviceArea, userRole, driverVehicleId, liveTrackers: allTrackers } = useWorkspace();
+  const router = useRouter();
+  const driverMode = isDriver(userRole);
+  const canManage = canManageFleet(userRole);
   const [companyOpen, setCompanyOpen] = useState(false);
   const [addVehicleOpen, setAddVehicleOpen] = useState(false);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | undefined>(undefined);
@@ -211,8 +225,8 @@ export default function DashboardPage() {
   const vehiclesWithLiveData = useMemo(
     () =>
       state.vehicles
-        // Hide placeholder vehicles whose name is a device ID already assigned to another vehicle.
         .filter((v) => {
+          if (driverMode && driverVehicleId && v.id !== driverVehicleId) return false;
           const isUnassigned = !v.deviceAssignment || v.deviceAssignment === "Not assigned";
           if (!isUnassigned) return true;
           return !claimedDeviceIds.has(v.name) && !claimedDeviceIds.has(v.id);
@@ -233,6 +247,11 @@ export default function DashboardPage() {
   const onlineCount = vehiclesWithLiveData.filter((v) => v.tracker?.received_at).length;
   const gpsCount = allTrackers.filter((t) => t.has_fix).length;
 
+  const unassignedTrackers = useMemo(
+    () => allTrackers.filter((t) => !claimedDeviceIds.has(t.device_id)),
+    [allTrackers, claimedDeviceIds],
+  );
+
   return (
     <div className="space-y-4">
       {/* Page header */}
@@ -251,10 +270,12 @@ export default function DashboardPage() {
             <SlidersHorizontal size={14} />
             Settings
           </button>
-          <Button onClick={() => setAddVehicleOpen(true)} className="h-9 px-3 text-sm">
-            <Plus size={14} className="mr-1.5" />
-            Add vehicle
-          </Button>
+          {canManage && (
+            <Button onClick={() => setAddVehicleOpen(true)} className="h-9 px-3 text-sm">
+              <Plus size={14} className="mr-1.5" />
+              Add vehicle
+            </Button>
+          )}
         </div>
       </div>
 
@@ -282,6 +303,33 @@ export default function DashboardPage() {
           </div>
         </SectionCard>
       </div>
+
+      {/* Unassigned tracker banner */}
+      {unassignedTrackers.length > 0 && canManage && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-100">
+              <RadioTower size={15} className="text-green-600" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-green-900">
+                {unassignedTrackers.length === 1
+                  ? "New tracker online"
+                  : `${unassignedTrackers.length} new trackers online`}
+              </p>
+              <p className="text-xs text-green-700 truncate">
+                {unassignedTrackers.map((t) => t.device_id).join(", ")} · ready to assign
+              </p>
+            </div>
+          </div>
+          <Button
+            onClick={() => setAddVehicleOpen(true)}
+            className="shrink-0 bg-green-700 hover:bg-green-800 border-green-700 text-xs h-8 px-3"
+          >
+            Assign
+          </Button>
+        </div>
+      )}
 
       {/* Map — takes up the full width, prominent */}
       <div ref={mapRef}>
@@ -338,6 +386,7 @@ export default function DashboardPage() {
                   setSelectedVehicleId(v.id);
                   mapRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
                 }}
+                onNoGpsClick={() => router.push(`/vehicles/${v.id}`)}
               />
             ))}
           </div>
@@ -348,9 +397,11 @@ export default function DashboardPage() {
             </div>
             <p className="text-sm font-semibold text-brand-ink">No vehicles yet</p>
             <p className="mt-1 text-xs text-slate-500">Add a vehicle to see live status here</p>
-            <Button onClick={() => setAddVehicleOpen(true)} className="mt-4">
-              Add vehicle
-            </Button>
+            {canManage && (
+              <Button onClick={() => setAddVehicleOpen(true)} className="mt-4">
+                Add vehicle
+              </Button>
+            )}
           </div>
         )}
       </SectionCard>

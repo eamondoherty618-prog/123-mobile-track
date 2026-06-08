@@ -1,6 +1,6 @@
 "use client";
 
-import { Award, ShieldAlert, UserRound } from "lucide-react";
+import { Award, Pencil, ShieldAlert, Trash2, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { AddDriverModal } from "@/components/forms/AddDriverModal";
@@ -11,8 +11,28 @@ import { useAllAlerts, useAllTrips, kmToMiles } from "@/lib/fleetHistory";
 import { useWorkspace } from "@/lib/workspace";
 
 export default function DriversPage() {
-  const { state } = useWorkspace();
+  const { state, updateDriver, removeDriver } = useWorkspace();
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingDriverId, setEditingDriverId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editLicense, setEditLicense] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+
+  function startEdit(driver: (typeof state.drivers)[0]) {
+    setEditingDriverId(driver.id);
+    setEditName(driver.name);
+    setEditPhone(driver.phone);
+    setEditLicense(driver.license);
+    setEditNotes(driver.notes);
+  }
+
+  function saveEdit() {
+    if (!editingDriverId) return;
+    updateDriver(editingDriverId, { name: editName, phone: editPhone, license: editLicense, notes: editNotes });
+    setEditingDriverId(null);
+  }
 
   // Collect all tracker IDs assigned to vehicles that have assigned drivers
   const deviceIds = useMemo(
@@ -158,21 +178,104 @@ export default function DriversPage() {
             <div className="grid gap-3 p-5 md:grid-cols-2">
               {state.drivers.map((driver) => (
                 <div key={driver.id} className="rounded-md border border-brand-line bg-brand-cloud px-4 py-4">
-                  <p className="font-semibold text-brand-ink">{driver.name}</p>
-                  <p className="mt-1 text-sm text-slate-500">{driver.phone}</p>
-                  <p className="mt-3 text-sm text-brand-text">License: {driver.license}</p>
-                  {driverStats[driver.id]?.vehicleNames.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {driverStats[driver.id].vehicleNames.map((name) => (
-                        <span key={name} className="rounded-full bg-white border border-brand-line px-2 py-0.5 text-xs text-slate-600">{name}</span>
-                      ))}
+                  {editingDriverId === driver.id ? (
+                    <div className="space-y-2">
+                      <input
+                        className="h-9 w-full rounded border border-brand-line bg-white px-2.5 text-sm"
+                        placeholder="Name"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        autoFocus
+                      />
+                      <input
+                        className="h-9 w-full rounded border border-brand-line bg-white px-2.5 text-sm"
+                        placeholder="Phone"
+                        value={editPhone}
+                        onChange={(e) => setEditPhone(e.target.value)}
+                      />
+                      <input
+                        className="h-9 w-full rounded border border-brand-line bg-white px-2.5 text-sm"
+                        placeholder="License"
+                        value={editLicense}
+                        onChange={(e) => setEditLicense(e.target.value)}
+                      />
+                      <input
+                        className="h-9 w-full rounded border border-brand-line bg-white px-2.5 text-sm"
+                        placeholder="Notes"
+                        value={editNotes}
+                        onChange={(e) => setEditNotes(e.target.value)}
+                      />
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          onClick={saveEdit}
+                          className="rounded-md bg-brand-navy px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingDriverId(null)}
+                          className="rounded-md border border-brand-line bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink hover:bg-brand-cloud"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
-                  )}
-                  {driverStats[driver.id] && (
-                    <div className="mt-2 flex gap-3 text-xs text-slate-400">
-                      <span>{Math.round(driverStats[driver.id].miles)} mi driven</span>
-                      <span>{driverStats[driver.id].events} alerts</span>
+                  ) : confirmRemoveId === driver.id ? (
+                    <div className="space-y-3">
+                      <p className="text-sm font-semibold text-brand-ink">{driver.name}</p>
+                      <p className="text-sm text-slate-500">Remove this driver from the account?</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { removeDriver(driver.id); setConfirmRemoveId(null); }}
+                          className="rounded-md bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600"
+                        >
+                          Remove
+                        </button>
+                        <button
+                          onClick={() => setConfirmRemoveId(null)}
+                          className="rounded-md border border-brand-line bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink hover:bg-brand-cloud"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-semibold text-brand-ink">{driver.name}</p>
+                        <div className="flex shrink-0 gap-1">
+                          <button
+                            onClick={() => startEdit(driver)}
+                            className="rounded p-1 text-slate-400 hover:bg-brand-line hover:text-brand-ink"
+                            title="Edit"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            onClick={() => setConfirmRemoveId(driver.id)}
+                            className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+                            title="Remove"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-sm text-slate-500">{driver.phone}</p>
+                      <p className="mt-3 text-sm text-brand-text">License: {driver.license}</p>
+                      {driverStats[driver.id]?.vehicleNames.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {driverStats[driver.id].vehicleNames.map((name) => (
+                            <span key={name} className="rounded-full bg-white border border-brand-line px-2 py-0.5 text-xs text-slate-600">{name}</span>
+                          ))}
+                        </div>
+                      )}
+                      {driverStats[driver.id] && (
+                        <div className="mt-2 flex gap-3 text-xs text-slate-400">
+                          <span>{Math.round(driverStats[driver.id].miles)} mi driven</span>
+                          <span>{driverStats[driver.id].events} alerts</span>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               ))}

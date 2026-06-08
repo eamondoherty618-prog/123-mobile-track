@@ -1,12 +1,12 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
+import "./liveMap.css";
 
 import { createVehicleMapIcon } from "@/lib/vehicleMapIcon";
 import { useEffect, useMemo, useRef } from "react";
 import { MapContainer, Marker, TileLayer, Tooltip, ZoomControl, useMap } from "react-leaflet";
 
-import { useAllTrackers } from "@/lib/liveTracker";
 import { useWorkspace } from "@/lib/workspace";
 import { MaintenanceItem } from "@/types";
 
@@ -62,7 +62,7 @@ function isMaintenanceDue(items: MaintenanceItem[]): boolean {
 
 function isRecentReport(receivedAt: string | undefined): boolean {
   if (!receivedAt) return false;
-  return Date.now() - new Date(receivedAt).getTime() < 5 * 60 * 1000;
+  return Date.now() - new Date(receivedAt).getTime() < 35 * 60 * 1000;
 }
 
 export function LiveFleetMapClient({
@@ -72,8 +72,7 @@ export function LiveFleetMapClient({
   selectedVehicleId?: string;
   onSelectVehicle?: (vehicleId: string) => void;
 }) {
-  const { state, serviceArea } = useWorkspace();
-  const allTrackers = useAllTrackers();
+  const { state, serviceArea, liveTrackers: allTrackers } = useWorkspace();
 
   // Vehicles with live GPS fix
   const liveMarkers = allTrackers
@@ -97,6 +96,7 @@ export function LiveFleetMapClient({
         speedMph,
         selected,
         maintDue: isMaintenanceDue(maintItems),
+        courseDeg: t.gps?.course_deg,
       };
     });
 
@@ -157,7 +157,10 @@ export function LiveFleetMapClient({
           scrollWheelZoom
         >
           <ZoomControl position="bottomright" />
-          <FitBoundsOnce points={liveMarkers.map((m) => m.point)} />
+          <FitBoundsOnce points={[
+            ...liveMarkers.map((m) => m.point),
+            ...lastKnownMarkers.map((m) => m.point),
+          ]} />
           <FlyToVehicle
             selectedVehicleId={selectedVehicleId}
             markers={[...liveMarkers, ...lastKnownMarkers]}
@@ -179,6 +182,7 @@ export function LiveFleetMapClient({
                 isOnline: true,
                 selected: m.selected,
                 maintDue: m.maintDue,
+                courseDeg: m.courseDeg,
               })}
               eventHandlers={{
                 click: () => onSelectVehicle?.(m.vehicleId ?? m.id),

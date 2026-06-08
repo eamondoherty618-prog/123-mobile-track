@@ -13,6 +13,7 @@ CREATE TABLE organizations (
   admin_email TEXT DEFAULT '',
   setup_complete BOOLEAN DEFAULT FALSE,
   tracker_assignment_vehicle_id TEXT DEFAULT '',
+  workspace_blob JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -137,8 +138,13 @@ ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "members_own" ON organization_members FOR ALL
   USING (user_id = auth.uid());
 
--- Users can read/write orgs they belong to
-CREATE POLICY "orgs_member" ON organizations FOR ALL
+-- Any authenticated user can create an org; members can read/update/delete their own
+CREATE POLICY "orgs_insert" ON organizations FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "orgs_select_update_delete" ON organizations FOR SELECT
+  USING (id IN (SELECT org_id FROM organization_members WHERE user_id = auth.uid()));
+CREATE POLICY "orgs_update" ON organizations FOR UPDATE
+  USING (id IN (SELECT org_id FROM organization_members WHERE user_id = auth.uid()));
+CREATE POLICY "orgs_delete" ON organizations FOR DELETE
   USING (id IN (SELECT org_id FROM organization_members WHERE user_id = auth.uid()));
 
 CREATE POLICY "vehicles_org" ON vehicles FOR ALL

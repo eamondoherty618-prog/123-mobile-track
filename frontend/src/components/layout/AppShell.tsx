@@ -9,19 +9,16 @@ import { SidebarNav } from "@/components/layout/SidebarNav";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { PwaInstallPrompt } from "@/components/mobile/PwaInstallPrompt";
 import { useAuth } from "@/lib/auth";
+import { useWorkspace } from "@/lib/workspace";
+import { canAccessPage } from "@/lib/permissions";
 import { navigationItems } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 
-// Only the most-used nav items in mobile bottom bar
-const mobileNavItems = navigationItems.filter((item) =>
-  ["/dashboard", "/vehicles", "/trips", "/alerts", "/settings"].includes(item.href),
-);
-
-function MobileBottomNav() {
+function MobileBottomNav({ items }: { items: typeof navigationItems }) {
   const pathname = usePathname();
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-30 flex border-t border-brand-line bg-white lg:hidden">
-      {mobileNavItems.map((item) => {
+      {items.map((item) => {
         const active = pathname.startsWith(item.href);
         const Icon = item.icon;
         return (
@@ -46,8 +43,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, loaded } = useAuth();
+  const { userRole } = useWorkspace();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  const allowedNavItems = navigationItems.filter((item) =>
+    canAccessPage(userRole ?? "owner", item.href)
+  );
+  const allowedMobileNavItems = allowedNavItems.filter((item) =>
+    ["/dashboard", "/vehicles", "/trips", "/alerts", "/settings"].includes(item.href)
+  );
 
   useEffect(() => {
     if (!loaded) return;
@@ -58,8 +63,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       const search = typeof window !== "undefined" ? window.location.search : "";
       const next = encodeURIComponent(pathname + search);
       router.replace(`/login?next=${next}`);
+    } else if (user && userRole && !canAccessPage(userRole, pathname)) {
+      router.replace("/dashboard");
     }
-  }, [loaded, pathname, user, router]);
+  }, [loaded, pathname, user, router, userRole]);
 
   // Login and onboarding pages get their own bare layout
   if (pathname === "/login" || pathname === "/onboarding" || pathname === "/privacy") {
@@ -91,7 +98,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      <MobileBottomNav />
+      <MobileBottomNav items={allowedMobileNavItems} />
       <MobileFilterDrawer open={filtersOpen} onClose={() => setFiltersOpen(false)} />
     </div>
   );

@@ -8,6 +8,7 @@ import { BrandLogo } from "@/components/branding/BrandLogo";
 import { navigationItems } from "@/lib/navigation";
 import { useAllTrackers } from "@/lib/liveTracker";
 import { useWorkspace } from "@/lib/workspace";
+import { canAccessPage } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 interface SidebarNavProps {
@@ -17,7 +18,8 @@ interface SidebarNavProps {
 
 export function SidebarNav({ collapsed, onToggle }: SidebarNavProps) {
   const pathname = usePathname();
-  const { state, serviceArea, hasServiceArea } = useWorkspace();
+  const { state, serviceArea, hasServiceArea, userRole } = useWorkspace();
+  const visibleNavItems = navigationItems.filter((item) => canAccessPage(userRole ?? "owner", item.href));
   const trackers = useAllTrackers();
   const onlineCount = trackers.length;
 
@@ -40,7 +42,7 @@ export function SidebarNav({ collapsed, onToggle }: SidebarNavProps) {
       </div>
 
       <nav className="mt-6 space-y-1">
-        {navigationItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const active = pathname.startsWith(item.href);
           const Icon = item.icon;
           return (

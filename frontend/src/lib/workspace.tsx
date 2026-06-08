@@ -6,6 +6,7 @@ import { Driver, Geofence, MaintenanceItem, Vehicle } from "@/types";
 import { useAllTrackers } from "@/lib/liveTracker";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
+import type { UserRole } from "@/lib/permissions";
 
 type DateRangeOption = "Today" | "Last 7 days" | "Last 30 days" | "This month";
 
@@ -61,11 +62,14 @@ type WorkspaceState = {
 type WorkspaceContextValue = {
   state: WorkspaceState;
   loaded: boolean;
+  userRole: UserRole;
+  driverVehicleId: string | null;
   serviceArea: ServiceAreaOption;
   hasServiceArea: boolean;
   serverSynced: boolean;
   forceSyncToServer: () => Promise<void>;
   notifications: { id: string; title: string; detail: string }[];
+  liveTrackers: import("@/lib/liveTracker").LiveTrackerPacket[];
   setDateRange: (value: DateRangeOption) => void;
   completeSetup: (payload: {
     companyName: string;
@@ -90,6 +94,8 @@ type WorkspaceContextValue = {
     deviceAssignment?: string;
   }) => void;
   addDriver: (payload: { name: string; phone: string; license: string; notes: string }) => void;
+  updateDriver: (id: string, updates: Partial<Pick<Driver, "name" | "phone" | "license" | "notes">>) => void;
+  removeDriver: (id: string) => void;
   assignTrackerToVehicle: (vehicleId: string, trackerId: string) => void;
   addAdmin: (payload: { name: string; email: string; alertTypes: string[] }) => void;
   removeAdmin: (adminId: string) => void;
@@ -102,6 +108,7 @@ type WorkspaceContextValue = {
   addGeofence: (item: Omit<Geofence, "id">) => void;
   updateGeofence: (id: string, updates: Partial<Omit<Geofence, "id">>) => void;
   removeGeofence: (id: string) => void;
+  updateTimezone: (tz: string) => void;
   addWifiShortcut: (item: Omit<WifiShortcut, "id">) => void;
   removeWifiShortcut: (id: string) => void;
   updateVehicle: (id: string, updates: Partial<Vehicle>) => void;
@@ -177,23 +184,41 @@ async function getOrCreateOrg(userId: string, email: string): Promise<string | n
 
   if (membership?.org_id) return membership.org_id;
 
-  // Create a new org and make this user the owner
-  const { data: org, error } = await supabase
-    .from("organizations")
-    .insert({ name: "123 Mobile Track", admin_email: email })
-    .select("id")
-    .single();
+  // Check if this email was pre-invited — join that org instead of creating one
+  const { data: invite } = await supabase
+    .from("org_invites")
+    .select("org_id, role")
+    .eq("email", email.trim().toLowerCase())
+    .maybeSingle();
 
-  if (error || !org) return null;
+  if (invite?.org_id) {
+    await supabase.from("organization_members").insert({
+      org_id: invite.org_id,
+      user_id: userId,
+      email: email.trim().toLowerCase(),
+      role: invite.role ?? "admin",
+    });
+    // Clean up the invite row
+    await supabase.from("org_invites").delete().eq("org_id", invite.org_id).eq("email", email.trim().toLowerCase());
+    return invite.org_id;
+  }
+
+  // No membership — create a new org and make this user the owner
+  const orgId = crypto.randomUUID();
+  const { error: orgError } = await supabase
+    .from("organizations")
+    .insert({ id: orgId, name: "123 Mobile Track", admin_email: email });
+
+  if (orgError) return null;
 
   await supabase.from("organization_members").insert({
-    org_id: org.id,
+    org_id: orgId,
     user_id: userId,
-    email,
+    email: email.trim().toLowerCase(),
     role: "owner",
   });
 
-  return org.id;
+  return orgId;
 }
 
 async function fetchWorkspace(userId: string, email: string): Promise<WorkspaceState | null> {
@@ -261,6 +286,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<WorkspaceState>(defaultState);
   const [serverLoaded, setServerLoaded] = useState(false);
   const [serverSynced, setServerSynced] = useState(false);
+  const [userRole, setUserRole] = useState<UserRole>(null);
+  const [driverVehicleId, setDriverVehicleId] = useState<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stateRef = useRef<WorkspaceState>(defaultState);
   stateRef.current = state;
@@ -269,10 +296,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!authLoaded) return;
 
-    // Reset to default and mark as unloaded so saves don't fire with stale data.
     setState(defaultState);
     setServerLoaded(false);
     setServerSynced(false);
+    setUserRole(null);
+    setDriverVehicleId(null);
 
     if (!user) {
       // Don't set serverLoaded=true here — keeps the save effect from firing with empty defaultState.
@@ -283,14 +311,69 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const email = user.email;
 
     async function load() {
+      // Fetch role from org membership
+      const { data: membership } = await supabase
+        .from("organization_members")
+        .select("role, org_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+      const role = (membership?.role ?? "owner") as UserRole;
+      setUserRole(role);
+
       const serverState = await fetchWorkspace(userId, email);
       if (serverState) {
         const normalized = { ...defaultState, ...serverState };
         if (!normalized.setupComplete && normalized.serviceAreaId) normalized.serviceAreaId = "";
+        // If localStorage has a newer timestamp or more items than the server copy,
+        // prefer localStorage to avoid losing changes made since the last server sync.
+        try {
+          const raw = window.localStorage.getItem(STORAGE_KEY);
+          if (raw) {
+            const local = JSON.parse(raw) as WorkspaceState & { _savedAt?: number };
+            const serverTime = (serverState as WorkspaceState & { _savedAt?: number })._savedAt ?? 0;
+            const localTime = local._savedAt ?? 0;
+            if (localTime > serverTime) {
+              // localStorage is newer — use it entirely and push to server
+              const localNormalized = { ...defaultState, ...local };
+              migrateDriverAssignments(localNormalized);
+              setState(localNormalized);
+              saveWorkspace(localNormalized, userId, email).then((ok) => { if (ok) setServerSynced(true); });
+              setServerLoaded(true);
+              return;
+            }
+            // Same age — recover any collections localStorage has more of
+            if ((local.vehicles?.length ?? 0) > (normalized.vehicles?.length ?? 0)) normalized.vehicles = local.vehicles;
+            if ((local.drivers?.length ?? 0) > (normalized.drivers?.length ?? 0)) normalized.drivers = local.drivers;
+            if ((local.wifiShortcuts?.length ?? 0) > (normalized.wifiShortcuts?.length ?? 0)) normalized.wifiShortcuts = local.wifiShortcuts;
+            if ((local.admins?.length ?? 1) > (normalized.admins?.length ?? 1)) normalized.admins = local.admins;
+            if ((local.geofences?.length ?? 0) > (normalized.geofences?.length ?? 0)) normalized.geofences = local.geofences;
+            if ((local.maintenanceItems?.length ?? 0) > (normalized.maintenanceItems?.length ?? 0)) normalized.maintenanceItems = local.maintenanceItems;
+          }
+        } catch { /* ignore */ }
+        // Merge any vehicles/drivers the user added while the server was loading.
+        // stateRef.current holds whatever setState calls ran during the async fetch.
+        const pending = stateRef.current;
+        const serverIds = new Set(normalized.vehicles.map((v) => v.id));
+        const pendingNew = pending.vehicles.filter((v) => !serverIds.has(v.id));
+        if (pendingNew.length > 0) normalized.vehicles = [...normalized.vehicles, ...pendingNew];
+        const serverDriverIds = new Set(normalized.drivers.map((d) => d.id));
+        const pendingNewDrivers = pending.drivers.filter((d) => !serverDriverIds.has(d.id));
+        if (pendingNewDrivers.length > 0) normalized.drivers = [...normalized.drivers, ...pendingNewDrivers];
+
         migrateDriverAssignments(normalized);
         setState(normalized);
         setServerSynced(true);
         setServerLoaded(true);
+        // For drivers: find their assigned vehicle by matching email
+        if (role === "driver") {
+          const driverRecord = normalized.drivers.find(
+            (d) => d.email?.toLowerCase() === email.toLowerCase()
+          );
+          const vehicle = driverRecord?.assignedVehicleIds?.[0]
+            ? normalized.vehicles.find((v) => v.id === driverRecord.assignedVehicleIds![0])
+            : null;
+          setDriverVehicleId(vehicle?.id ?? null);
+        }
         return;
       }
 
@@ -320,11 +403,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   // Debounced save — write to both server and localStorage on every state change
   const debouncedSave = useCallback((nextState: WorkspaceState) => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+    const stamped = { ...nextState, _savedAt: Date.now() };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stamped));
+    setServerSynced(false);
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(async () => {
       if (!user) return;
-      const ok = await saveWorkspace(nextState, user.id, user.email);
+      const ok = await saveWorkspace(stamped, user.id, user.email);
       if (ok) setServerSynced(true);
     }, 1500);
   }, [user]);
@@ -334,7 +419,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     debouncedSave(state);
   }, [state, serverLoaded, debouncedSave]);
 
-  const liveTrackers = useAllTrackers();
+  const liveTrackers = useAllTrackers(user?.token ?? undefined);
 
   const serviceArea =
     serviceAreaOptions.find((option) => option.id === state.serviceAreaId) ?? unsetServiceArea;
@@ -399,9 +484,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     () => ({
       state,
       loaded: serverLoaded,
+      userRole,
+      driverVehicleId,
       serviceArea,
       hasServiceArea,
       serverSynced,
+      liveTrackers,
       forceSyncToServer,
       notifications,
       setDateRange: (value) => setState((current) => ({ ...current, dateRange: value })),
@@ -475,6 +563,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             },
           ],
         })),
+      updateDriver: (id, updates) =>
+        setState((current) => ({
+          ...current,
+          drivers: current.drivers.map((d) => d.id === id ? { ...d, ...updates } : d),
+        })),
+      removeDriver: (id) =>
+        setState((current) => ({
+          ...current,
+          drivers: current.drivers.filter((d) => d.id !== id),
+          vehicles: current.vehicles.map((v) => ({
+            ...v,
+            assignedDriverIds: (v.assignedDriverIds ?? []).filter((dId) => dId !== id),
+          })),
+        })),
       assignTrackerToVehicle: (vehicleId, trackerId) =>
         setState((current) => ({
           ...current,
@@ -493,20 +595,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           })),
         })),
       addAdmin: (payload) => {
-        // Register as org member in Supabase so they can access the org's data on login
-        const registerMember = async () => {
-          if (!user) return;
-          const orgId = await getOrCreateOrg(user.id, user.email);
-          if (!orgId) return;
-          // We store the invited email; they'll get linked to org_id when they sign up/in
-          await supabase.from("organization_members").upsert({
-            org_id: orgId,
-            user_id: payload.email, // placeholder until they sign in
-            email: payload.email.trim().toLowerCase(),
-            role: "admin",
-          }, { onConflict: "org_id,user_id" });
-        };
-        registerMember();
+        // Pre-register the invite so they join this org on signup
+        if (user) {
+          getOrCreateOrg(user.id, user.email).then((orgId) => {
+            if (!orgId) return;
+            supabase.from("org_invites").upsert({
+              org_id: orgId,
+              email: payload.email.trim().toLowerCase(),
+              role: "admin",
+            }, { onConflict: "org_id,email" }).then(() => {});
+          });
+        }
         setState((current) => ({
           ...current,
           admins: [
@@ -592,6 +691,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           ...current,
           geofences: (current.geofences ?? []).filter((g) => g.id !== id),
         })),
+      updateTimezone: (tz) => setState((current) => ({ ...current, timezone: tz })),
       addWifiShortcut: (item) =>
         setState((current) => ({
           ...current,
@@ -645,7 +745,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           ),
         })),
     }),
-    [hasServiceArea, notifications, serviceArea, serverSynced, forceSyncToServer, state],
+    [hasServiceArea, notifications, serviceArea, serverSynced, forceSyncToServer, state, userRole, driverVehicleId, liveTrackers],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

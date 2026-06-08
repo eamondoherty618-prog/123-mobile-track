@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Clock, Cpu, Link2, Loader2, Plus, RadioTower, Zap } from "lucide-react";
+import { Battery, ChevronDown, ChevronUp, Clock, Cpu, Link2, Loader2, Plus, RadioTower, Signal, Zap } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -165,15 +165,31 @@ function FirmwareCard({ trackerFirmwares }: { trackerFirmwares: { name: string; 
 }
 
 
+function formatUpdateTime(iso: string, tz: string): string {
+  const d = new Date(iso);
+  const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) return "Just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const today = new Date().toLocaleDateString("en-US", { timeZone: tz });
+  const dDay = d.toLocaleDateString("en-US", { timeZone: tz });
+  const timeStr = d.toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
+  if (today === dDay) return timeStr;
+  const yesterday = new Date(Date.now() - 86400000).toLocaleDateString("en-US", { timeZone: tz });
+  if (dDay === yesterday) return `Yesterday ${timeStr}`;
+  return d.toLocaleDateString("en-US", { timeZone: tz, month: "short", day: "numeric" }) + ` ${timeStr}`;
+}
+
 export default function DevicesPage() {
   const trackers = useAllTrackers();
   const [selectedTrackerId, setSelectedTrackerId] = useState<string | null>(null);
   const selectedTracker = trackers.find((t) => t.device_id === (selectedTrackerId ?? trackers[0]?.device_id)) ?? trackers[0] ?? null;
   const profileDevice = buildPrototypeDevice(selectedTracker);
   const { state, assignTrackerToVehicle, addVehicle } = useWorkspace();
+  const timezone = state.timezone ?? "America/New_York";
 
   const [pendingAssignments, setPendingAssignments] = useState<Record<string, string>>({});
   const [savedTrackers, setSavedTrackers] = useState<Set<string>>(new Set());
+  const [expandedTrackers, setExpandedTrackers] = useState<Set<string>>(new Set());
 
   // "Link existing tracker" form
   const [linkDeviceId, setLinkDeviceId] = useState("");
@@ -217,7 +233,7 @@ export default function DevicesPage() {
   const assignedCount = state.vehicles.filter(
     (v) => v.deviceAssignment && v.deviceAssignment !== "Not assigned",
   ).length;
-  const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+  const fiveMinAgo = Date.now() - 35 * 60 * 1000;
   const onlineCount = trackers.filter(
     (t) => t.received_at && new Date(t.received_at).getTime() > fiveMinAgo,
   ).length;
@@ -351,94 +367,108 @@ export default function DevicesPage() {
             const savedVehicleName = currentVehicleName(tracker.device_id);
             const pendingVehicleId = pendingAssignments[tracker.device_id] ?? savedVehicleId;
             const isSaved = savedTrackers.has(tracker.device_id);
-            const isSelected = (selectedTrackerId ?? trackers[0]?.device_id) === tracker.device_id;
+            const isOnline = tracker.received_at
+              ? Date.now() - new Date(tracker.received_at).getTime() < 35 * 60 * 1000
+              : false;
+            const isExpanded = expandedTrackers.has(tracker.device_id);
 
             return (
-              <SectionCard
-                key={tracker.device_id}
-                className={`overflow-hidden cursor-pointer transition-shadow ${isSelected ? "ring-2 ring-brand-navy" : ""}`}
-                onClick={() => setSelectedTrackerId(tracker.device_id)}
-              >
-                <div className="border-b border-brand-line px-5 py-4">
-                  <h3 className="text-base font-semibold text-brand-ink">
-                    {savedVehicleName !== "Not assigned" ? savedVehicleName : tracker.device_id}
-                  </h3>
-                  <p className="text-sm text-slate-500">
-                    {savedVehicleName !== "Not assigned"
-                      ? `${tracker.device_id} · Live status from the last check-in.`
-                      : "Not assigned to a vehicle · Live status from the last check-in."}
-                  </p>
-                </div>
-                <div className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
-                  {([
-                    ["Device ID", tracker.device_id],
-                    ["Assignment", savedVehicleName],
-                    ["SIM", "1NCE SIM installed"],
-                    ["Firmware", tracker.firmware ?? "0.1.0"],
-                    ["Battery", `${battPct}%`],
-                    ["Signal", `${signalPct}%`],
-                    ["Location", tracker.has_fix ? "Available" : "Waiting for GPS"],
-                    ["Motion", tracker.motion_state === "moving" ? "Moving" : "Stopped"],
-                    ["Last update", tracker.received_at ?? "No updates yet"],
-                  ] as [string, string][]).map(([label, value]) => (
-                    <div key={label} className="rounded-md border border-brand-line bg-brand-cloud px-4 py-4">
-                      <p className="text-xs font-semibold uppercase text-slate-500">{label}</p>
-                      <p className="mt-1 text-sm font-semibold text-brand-ink">{value}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="border-t border-brand-line px-5 py-4">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <select
-                      className="h-10 min-w-[220px] rounded-md border border-brand-line bg-white px-3 text-sm"
-                      value={pendingVehicleId}
-                      onChange={(e) => {
-                        setPendingAssignments((prev) => ({ ...prev, [tracker.device_id]: e.target.value }));
-                        setSavedTrackers((prev) => {
-                          const next = new Set(prev);
-                          next.delete(tracker.device_id);
-                          return next;
-                        });
-                      }}
-                      disabled={state.vehicles.length === 0}
-                    >
-                      <option value="">Assign to vehicle</option>
-                      {state.vehicles.map((vehicle) => (
-                        <option key={vehicle.id} value={vehicle.id}>
-                          {vehicle.name}
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      variant="secondary"
-                      disabled={state.vehicles.length === 0 || !pendingVehicleId}
-                      onClick={() => {
-                        assignTrackerToVehicle(pendingVehicleId, tracker.device_id);
-                        setSavedTrackers((prev) => new Set(prev).add(tracker.device_id));
-                      }}
-                    >
-                      Save Assignment
-                    </Button>
+              <SectionCard key={tracker.device_id} className="overflow-hidden">
+                {/* Summary row — always visible */}
+                <button
+                  className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-brand-cloud/50 transition-colors"
+                  onClick={() => setExpandedTrackers((prev) => {
+                    const next = new Set(prev);
+                    isExpanded ? next.delete(tracker.device_id) : next.add(tracker.device_id);
+                    return next;
+                  })}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-brand-ink truncate">
+                      {savedVehicleName !== "Not assigned" ? savedVehicleName : tracker.device_id}
+                    </p>
+                    <p className="text-xs text-slate-400 truncate">{tracker.device_id}</p>
                   </div>
-                  {state.vehicles.length === 0 && (
-                    <p className="mt-2 text-sm text-slate-500">
-                      Add a vehicle first, then link a tracker here.
-                    </p>
-                  )}
-                  {state.vehicles.length > 0 && !pendingVehicleId && (
-                    <p className="mt-2 text-sm text-slate-500">
-                      Choose the vehicle to assign {tracker.device_id} to.
-                    </p>
-                  )}
-                  {isSaved && (
-                    <p className="mt-2 text-sm text-brand-forest">Assignment saved.</p>
-                  )}
-                  {!isSaved && savedVehicleName !== "Not assigned" && (
-                    <p className="mt-2 text-sm text-slate-500">
-                      Currently assigned to: {savedVehicleName}.
-                    </p>
-                  )}
-                </div>
+                  <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${isOnline ? "bg-brand-mint text-brand-forest" : "bg-slate-100 text-slate-500"}`}>
+                      {isOnline ? "Online" : "Offline"}
+                    </span>
+                    <span className="flex items-center gap-1 text-xs text-slate-600">
+                      <Battery size={13} className={battPct < 20 ? "text-red-500" : "text-slate-400"} />
+                      {battPct}%
+                    </span>
+                    <span className="flex items-center gap-1 text-xs text-slate-600">
+                      <Signal size={13} className="text-slate-400" />
+                      {signalPct}%
+                    </span>
+                    <span className={`text-xs font-medium ${tracker.has_fix ? "text-brand-forest" : "text-slate-400"}`}>
+                      {tracker.has_fix ? "GPS fix" : "No GPS"}
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      {tracker.received_at ? formatUpdateTime(tracker.received_at, timezone) : "Never"}
+                    </span>
+                    {isExpanded ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
+                  </div>
+                </button>
+
+                {/* Expanded details */}
+                {isExpanded && (
+                  <>
+                    <div className="grid gap-3 border-t border-brand-line p-5 md:grid-cols-2 xl:grid-cols-3">
+                      {([
+                        ["Device ID", tracker.device_id],
+                        ["Assignment", savedVehicleName],
+                        ["Firmware", tracker.firmware ?? "0.1.0"],
+                        ["Battery", `${battPct}%`],
+                        ["Signal", `${signalPct}%`],
+                        ["Location", tracker.has_fix ? "GPS fix active" : "No fix — needs outdoors"],
+                        ["Motion", tracker.motion_state === "moving" ? "Moving" : "Stopped"],
+                        ["Last update", tracker.received_at ? formatUpdateTime(tracker.received_at, timezone) : "Never"],
+                      ] as [string, string][]).map(([label, value]) => (
+                        <div key={label} className="rounded-md border border-brand-line bg-brand-cloud px-4 py-3">
+                          <p className="text-xs font-semibold uppercase text-slate-500">{label}</p>
+                          <p className="mt-1 text-sm font-semibold text-brand-ink">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="border-t border-brand-line px-5 py-4">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <select
+                          className="h-10 min-w-[220px] rounded-md border border-brand-line bg-white px-3 text-sm"
+                          value={pendingVehicleId}
+                          onChange={(e) => {
+                            setPendingAssignments((prev) => ({ ...prev, [tracker.device_id]: e.target.value }));
+                            setSavedTrackers((prev) => {
+                              const next = new Set(prev);
+                              next.delete(tracker.device_id);
+                              return next;
+                            });
+                          }}
+                          disabled={state.vehicles.length === 0}
+                        >
+                          <option value="">Assign to vehicle</option>
+                          {state.vehicles.map((vehicle) => (
+                            <option key={vehicle.id} value={vehicle.id}>{vehicle.name}</option>
+                          ))}
+                        </select>
+                        <Button
+                          variant="secondary"
+                          disabled={state.vehicles.length === 0 || !pendingVehicleId}
+                          onClick={() => {
+                            assignTrackerToVehicle(pendingVehicleId, tracker.device_id);
+                            setSavedTrackers((prev) => new Set(prev).add(tracker.device_id));
+                          }}
+                        >
+                          Save
+                        </Button>
+                      </div>
+                      {isSaved && <p className="mt-2 text-sm text-brand-forest">Assignment saved.</p>}
+                      {!isSaved && savedVehicleName !== "Not assigned" && (
+                        <p className="mt-2 text-xs text-slate-400">Assigned to: {savedVehicleName}</p>
+                      )}
+                    </div>
+                  </>
+                )}
               </SectionCard>
             );
           })}

@@ -18,6 +18,7 @@ import {
 } from "@/lib/fleetHistory";
 import { useGeocode } from "@/lib/geocode";
 import { useWorkspace } from "@/lib/workspace";
+import { isDriver } from "@/lib/permissions";
 
 const TripRouteMapClient = dynamic(
   () => import("@/components/map/TripRouteMapClient"),
@@ -159,12 +160,16 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 export default function TripsPage() {
-  const { state } = useWorkspace();
+  const { state, userRole, driverVehicleId } = useWorkspace();
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
 
   const assignedVehicles = useMemo(
-    () => state.vehicles.filter((v) => v.deviceAssignment && v.deviceAssignment !== "Not assigned"),
-    [state.vehicles],
+    () => state.vehicles.filter((v) => {
+      if (!v.deviceAssignment || v.deviceAssignment === "Not assigned") return false;
+      if (isDriver(userRole) && driverVehicleId && v.id !== driverVehicleId) return false;
+      return true;
+    }),
+    [state.vehicles, userRole, driverVehicleId],
   );
 
   const deviceIds = useMemo(

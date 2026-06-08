@@ -1,12 +1,11 @@
 import type { Config, Context } from "@netlify/functions";
+import { createClient } from "@supabase/supabase-js";
+import ws from "ws";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: {
-      "content-type": "application/json",
-      "cache-control": "no-store",
-    },
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
 }
 
@@ -23,44 +22,64 @@ function getUserInfo(req: Request): { userId: string; email: string } | null {
   }
 }
 
+function supabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { realtime: { transport: ws } },
+  );
+}
+
 export default async (req: Request, context: Context) => {
   const userInfo = getUserInfo(req);
   if (!userInfo) return json({ ok: false, error: "unauthorized" }, 401);
 
-  const { getStore } = await import("@netlify/blobs");
+  const db = supabase();
 
-  // Find which device IDs belong to this user's workspace (or their org owner's).
-  const wsStore = getStore({ name: "fleet-workspaces", consistency: "strong" });
+  // Look up the user's org from organization_members (same lookup as the frontend workspace).
+  const { data: members } = await db
+    .from("organization_members")
+    .select("org_id")
+    .eq("user_id", userInfo.userId)
+    .limit(1);
+  const membership = members?.[0] ?? null;
 
-  let workspaceOwner = userInfo.userId;
-  if (userInfo.email) {
-    const membership = await wsStore.get(`member/${userInfo.email}`, { type: "json" }) as { orgOwner: string } | null;
-    if (membership?.orgOwner) workspaceOwner = membership.orgOwner;
-  }
+  if (!membership?.org_id) return json({ ok: true, devices: {} });
 
-  const ws = await wsStore.get(`workspace/${workspaceOwner}`, { type: "json" }) as {
+  // Get the workspace blob from Supabase organizations table.
+  const { data: org } = await db
+    .from("organizations")
+    .select("workspace_blob")
+    .eq("id", membership.org_id)
+    .maybeSingle();
+
+  const workspaceBlob = org?.workspace_blob as {
     vehicles?: { id: string; deviceAssignment?: string }[];
   } | null;
 
   const ownedIds = new Set(
-    (ws?.vehicles ?? [])
+    (workspaceBlob?.vehicles ?? [])
       .map((v) => v.deviceAssignment)
-      .filter((id): id is string => Boolean(id)),
+      .filter((id): id is string => Boolean(id) && id !== "Not assigned"),
   );
 
-  if (ownedIds.size === 0) {
-    return json({ ok: true, devices: {} });
-  }
+  if (ownedIds.size === 0) return json({ ok: true, devices: {} });
 
-  const store = getStore({ name: "fleet-telemetry", consistency: "strong" });
+  // Fetch live telemetry for all owned devices using the service role key (bypasses RLS).
+  const { data: rows } = await db
+    .from("telemetry_latest")
+    .select("*")
+    .in("device_id", Array.from(ownedIds));
+
   const devices: Record<string, unknown> = {};
-
-  for (const deviceId of ownedIds) {
-    const record = await store.get(`latest/${deviceId}`, { type: "json" });
-    if (record && typeof record === "object") {
-      const lastGps = await store.get(`last_gps/${deviceId}`, { type: "json" });
-      devices[deviceId] = lastGps ? { ...record, last_gps: lastGps } : record;
-    }
+  for (const row of rows ?? []) {
+    const id = row.device_id as string;
+    const hasLastGps = row.last_lat != null && row.last_lon != null;
+    devices[id] = {
+      ...row,
+      gps: row.lat != null ? { lat: row.lat, lon: row.lon, speed_kph: row.speed_kph, timestamp: row.gps_timestamp } : undefined,
+      last_gps: hasLastGps ? { lat: row.last_lat, lon: row.last_lon, time: row.received_at } : undefined,
+    };
   }
 
   return json({ ok: true, devices });

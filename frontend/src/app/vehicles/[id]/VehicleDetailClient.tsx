@@ -12,7 +12,6 @@ import { Badge } from "@/components/ui/Badge";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { EditVehicleModal } from "@/components/forms/EditVehicleModal";
 import { formatDate, formatDuration, formatTime, kmToMiles, kphToMph, useAlerts, useTrips } from "@/lib/fleetHistory";
-import { useAllTrackers } from "@/lib/liveTracker";
 import { useWorkspace } from "@/lib/workspace";
 
 const LiveVehicleMapClient = dynamic(
@@ -29,8 +28,7 @@ const ALERT_COLORS: Record<string, string> = {
 export function VehicleDetailClient() {
   const pathname = usePathname();
   const id = pathname.split("/").filter(Boolean).pop() ?? "";
-  const { state, loaded, assignDriverToVehicle, removeDriverFromVehicle } = useWorkspace();
-  const allTrackers = useAllTrackers();
+  const { state, loaded, assignDriverToVehicle, removeDriverFromVehicle, liveTrackers: allTrackers } = useWorkspace();
   const [editOpen, setEditOpen] = useState(false);
   const [addingDriver, setAddingDriver] = useState(false);
   const [confirmRemoveDriverId, setConfirmRemoveDriverId] = useState<string | null>(null);
@@ -55,6 +53,7 @@ export function VehicleDetailClient() {
   const recentAlerts = alerts.slice(0, 5);
 
   const speedMph = tracker?.gps?.speed_kph ? Math.round(kphToMph(Number(tracker.gps.speed_kph))) : 0;
+  const stoppedSinceMs = tracker?.stopped_since ? Date.now() - new Date(tracker.stopped_since).getTime() : Infinity;
   const batteryLevel = tracker?.battery_mv
     ? Math.max(0, Math.min(100, Math.round((((tracker.battery_mv) - 3300) / 900) * 100)))
     : null;
@@ -62,9 +61,15 @@ export function VehicleDetailClient() {
     ? Math.max(0, Math.min(100, Math.round((tracker.cell_rssi / 31) * 100)))
     : null;
   const isOnline = tracker?.received_at
-    ? Date.now() - new Date(tracker.received_at).getTime() < 5 * 60 * 1000
+    ? Date.now() - new Date(tracker.received_at).getTime() < 35 * 60 * 1000
     : false;
   const hasGps = Boolean(tracker?.has_fix && tracker.gps?.lat && tracker.gps?.lon);
+  const hasLastGps = !hasGps && Boolean(tracker?.last_gps?.lat && tracker?.last_gps?.lon);
+  const lastSeenTime = tracker?.last_gps?.time
+    ? new Date(tracker.last_gps.time).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : tracker?.received_at
+    ? new Date(tracker.received_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : null;
 
   if (!loaded) {
     return (
@@ -124,15 +129,29 @@ export function VehicleDetailClient() {
       {vehicle.deviceAssignment && vehicle.deviceAssignment !== "Not assigned" ? (
         <SectionCard className="overflow-hidden">
           <div className="border-b border-brand-line px-5 py-3">
-            <div className="flex items-center gap-2">
-              <Navigation size={16} className="text-brand-navy" />
-              <h2 className="text-base font-semibold text-brand-ink">Live location</h2>
-              {hasGps && (
-                <span className="text-xs text-slate-400">
-                  · {speedMph > 3 ? `${speedMph} mph` : "stopped"}
-                </span>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Navigation size={16} className={hasGps ? "text-brand-navy" : "text-slate-400"} />
+                <h2 className="text-base font-semibold text-brand-ink">
+                  {hasGps ? "Live location" : hasLastGps ? "Last known location" : "Location"}
+                </h2>
+                {hasGps && (
+                  <span className="text-xs text-slate-400">
+                    · {speedMph > 3 ? `${speedMph} mph` : "stopped"}
+                  </span>
+                )}
+              </div>
+              {!hasGps && lastSeenTime && (
+                <span className="text-xs text-slate-400">Last seen {lastSeenTime}</span>
               )}
             </div>
+            {!hasGps && (
+              <p className="mt-0.5 text-xs text-slate-400">
+                {hasLastGps
+                  ? "GPS offline — showing last known position. Will update when fix is restored."
+                  : "Waiting for GPS fix — take vehicle outdoors."}
+              </p>
+            )}
           </div>
           <div className="h-52">
             <LiveVehicleMapClient
@@ -141,6 +160,8 @@ export function VehicleDetailClient() {
               vehicleColor={vehicle.color}
               photo={vehicle.photo}
               tracker={tracker ?? null}
+              fallbackLat={vehicle.location?.lat ?? null}
+              fallbackLon={vehicle.location?.lng ?? null}
             />
           </div>
         </SectionCard>

@@ -13,19 +13,26 @@ export default function LiveVehicleMapClient({
   vehicleColor,
   photo,
   tracker,
+  fallbackLat,
+  fallbackLon,
 }: {
   vehicleName: string;
   vehicleType?: string;
   vehicleColor?: string;
   photo?: string;
   tracker: LiveTrackerPacket | null;
+  fallbackLat?: number | null;
+  fallbackLon?: number | null;
 }) {
   const hasGps = Boolean(tracker?.has_fix && tracker.gps?.lat && tracker.gps?.lon);
   const hasLastGps = !hasGps && Boolean(tracker?.last_gps?.lat && tracker?.last_gps?.lon);
+  const usingFallback = !hasGps && !hasLastGps && fallbackLat != null && fallbackLon != null;
 
-  const lat = hasGps ? Number(tracker!.gps!.lat) : hasLastGps ? Number(tracker!.last_gps!.lat) : null;
-  const lon = hasGps ? Number(tracker!.gps!.lon) : hasLastGps ? Number(tracker!.last_gps!.lon) : null;
+  const lat = hasGps ? Number(tracker!.gps!.lat) : hasLastGps ? Number(tracker!.last_gps!.lat) : fallbackLat ?? null;
+  const lon = hasGps ? Number(tracker!.gps!.lon) : hasLastGps ? Number(tracker!.last_gps!.lon) : fallbackLon ?? null;
   const speedMph = hasGps ? Math.round(Number(tracker!.gps?.speed_kph ?? 0) * 0.621371) : 0;
+  const stoppedSinceMs = tracker?.stopped_since ? Date.now() - new Date(tracker.stopped_since).getTime() : Infinity;
+  const isMoving = tracker?.motion_state === "moving" || stoppedSinceMs < 3 * 60 * 1000;
 
   if (lat === null || lon === null) {
     return (
@@ -40,7 +47,7 @@ export default function LiveVehicleMapClient({
     vehicleType: vehicleType ?? "Car",
     vehicleColor,
     photo,
-    isMoving: speedMph > 3,
+    isMoving,
     isOnline: hasGps,
   });
   const lastSeenStr = tracker?.last_gps?.time
@@ -50,7 +57,7 @@ export default function LiveVehicleMapClient({
   return (
     <MapContainer
       center={center}
-      zoom={15}
+      zoom={usingFallback ? 12 : 15}
       zoomControl={false}
       scrollWheelZoom={false}
       style={{ height: "100%", width: "100%", opacity: hasGps ? 1 : 0.7 }}
@@ -64,8 +71,10 @@ export default function LiveVehicleMapClient({
             <p className="font-semibold">{vehicleName}</p>
             <p className="text-slate-500">
               {hasGps
-                ? speedMph > 3 ? `${speedMph} mph` : "Stopped"
-                : `Last known${lastSeenStr ? ` · ${lastSeenStr}` : ""}`}
+                ? isMoving ? `${speedMph > 0 ? speedMph + " mph" : "Moving"}` : "Stopped"
+                : hasLastGps
+                  ? `Last known${lastSeenStr ? ` · ${lastSeenStr}` : ""}`
+                  : "Waiting for GPS fix"}
             </p>
           </div>
         </Tooltip>

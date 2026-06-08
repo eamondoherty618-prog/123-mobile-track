@@ -7,6 +7,7 @@ import { ReactNode, useMemo } from "react";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { formatDate, formatTime, kphToMph, useAllAlerts, type FleetAlert } from "@/lib/fleetHistory";
 import { useWorkspace } from "@/lib/workspace";
+import { isDriver } from "@/lib/permissions";
 
 const AlertMapClient = dynamic(
   () => import("@/components/map/AlertMapClient"),
@@ -66,13 +67,14 @@ function AlertRow({ alert }: { alert: FleetAlert }) {
 }
 
 export default function AlertsPage() {
-  const { state } = useWorkspace();
+  const { state, userRole, driverVehicleId } = useWorkspace();
   const deviceIds = useMemo(
     () =>
       state.vehicles
+        .filter((v) => !isDriver(userRole) || v.id === driverVehicleId)
         .map((v) => v.deviceAssignment)
         .filter((id): id is string => Boolean(id) && id !== "Not assigned"),
-    [state.vehicles],
+    [state.vehicles, userRole, driverVehicleId],
   );
   const { alerts, loading, error } = useAllAlerts(deviceIds);
 

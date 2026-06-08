@@ -15,9 +15,9 @@ function AddDevicePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const hwFromUrl = searchParams.get("hw") ?? "";
-  const { state } = useWorkspace();
+  const { state, updateVehicle, addVehicle, forceSyncToServer } = useWorkspace();
 
-  const unassignedVehicles = state.vehicles.filter((v) => !v.deviceAssignment);
+  const unassignedVehicles = state.vehicles.filter((v) => !v.deviceAssignment || v.deviceAssignment === "Not assigned");
 
   const [step, setStep] = useState<Step>(hwFromUrl ? "name" : "instructions");
   const [hardwareId, setHardwareId] = useState(hwFromUrl);
@@ -89,7 +89,29 @@ function AddDevicePage() {
       });
       const data = await res.json();
       if (!data.ok) { setError(data.error ?? "Claim failed"); return; }
-      setClaimedVehicleName(resolvedName());
+
+      const name = resolvedName();
+      if (usingExisting) {
+        updateVehicle(selectedVehicleId, { deviceAssignment: data.device_id });
+      } else {
+        addVehicle({
+          name,
+          vehicleNumber: "",
+          plate: "",
+          make: "",
+          model: "",
+          year: new Date().getFullYear(),
+          type: "Truck",
+          notes: "",
+          installDate: new Date().toISOString().slice(0, 10),
+          enabledFeatures: [],
+          deviceAssignment: data.device_id,
+        });
+      }
+      // Sync immediately so the new vehicle survives a page refresh
+      setTimeout(() => forceSyncToServer(), 300);
+
+      setClaimedVehicleName(name);
       setDeviceId(data.device_id);
       setStep("done");
     } catch {

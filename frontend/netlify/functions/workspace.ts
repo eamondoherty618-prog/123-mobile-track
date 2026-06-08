@@ -41,7 +41,25 @@ export default async (req: Request, context: Context) => {
 
   if (req.method === "POST") {
     try {
-      const body = await req.json();
+      const body = await req.json() as Record<string, unknown>;
+      const existing = await store.get(key, { type: "json" }) as Record<string, unknown> | null;
+
+      if (existing) {
+        const serverSavedAt = (existing._savedAt as number) ?? 0;
+        const clientSavedAt = (body._savedAt as number) ?? 0;
+
+        if (serverSavedAt > clientSavedAt) {
+          // Server is newer — client has stale data. Preserve server's device assignments
+          // so a stale write from an old tab/device never wipes tracker assignments.
+          const serverVehicles = (existing.vehicles as Array<{ id: string; deviceAssignment?: string }>) ?? [];
+          const serverAssignments = new Map(serverVehicles.map((v) => [v.id, v.deviceAssignment]));
+          body.vehicles = ((body.vehicles as Array<{ id: string; deviceAssignment?: string }>) ?? []).map((v) => ({
+            ...v,
+            deviceAssignment: serverAssignments.get(v.id) ?? v.deviceAssignment,
+          }));
+        }
+      }
+
       await store.setJSON(key, body);
       return json({ ok: true });
     } catch {

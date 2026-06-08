@@ -1,4 +1,4 @@
-import type { Config, Context } from "@netlify/functions";
+import type { Config } from "@netlify/functions";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -7,14 +7,19 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function getUserId(context: Context): string | null {
-  const ctx = context.clientContext as { user?: { sub?: string } } | undefined;
-  return ctx?.user?.sub ?? null;
+function getUserId(req: Request): string | null {
+  const auth = req.headers.get("authorization");
+  if (!auth?.startsWith("Bearer ")) return null;
+  try {
+    const payload = auth.slice(7).split(".")[1];
+    const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return decoded.sub ?? null;
+  } catch { return null; }
 }
 
 type OtaMetadata = { version: string; size: number; uploaded_at: string };
 
-export default async (req: Request, context: Context) => {
+export default async (req: Request) => {
   const url = new URL(req.url);
   const action = url.pathname.split("/").pop();
 
@@ -55,7 +60,7 @@ export default async (req: Request, context: Context) => {
   // Authenticated upload of a new firmware binary. Sets it as the latest version
   // so all managed trackers will be offered the update on next check-in.
   if (action === "upload" && req.method === "POST") {
-    if (!getUserId(context)) return json({ error: "unauthorized" }, 401);
+    if (!getUserId(req)) return json({ error: "unauthorized" }, 401);
 
     const version = url.searchParams.get("version");
     if (!version) return json({ error: "version query param required" }, 400);
@@ -81,6 +86,50 @@ export default async (req: Request, context: Context) => {
     return json({ ok: true, latest: latest ?? null });
   }
 
+  // ── GET /api/fleet/ota/trackers ───────────────────────────────────────────
+  // Returns deployed firmware version + per-tracker firmware versions from telemetry.
+  if (action === "trackers" && req.method === "GET") {
+    const userId = getUserId(req);
+    if (!userId) return json({ error: "unauthorized" }, 401);
+
+    const auth = req.headers.get("authorization")!;
+    const jwtPayload = JSON.parse(atob(auth.slice(7).split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))) as { email?: string };
+    const email = (jwtPayload.email ?? "").toLowerCase();
+
+    const wsStore = getStore({ name: "fleet-workspaces", consistency: "strong" });
+    let wsKey = `workspace/${userId}`;
+    if (email) {
+      const membership = await wsStore.get(`member/${email}`, { type: "json" }) as { orgOwner: string } | null;
+      if (membership?.orgOwner) wsKey = `workspace/${membership.orgOwner}`;
+    }
+    const workspace = await wsStore.get(wsKey, { type: "json" }) as {
+      vehicles?: { id: string; name: string; deviceAssignment?: string }[];
+    } | null;
+
+    const vehicles = (workspace?.vehicles ?? []).filter(
+      (v) => v.deviceAssignment && v.deviceAssignment !== "Not assigned",
+    );
+
+    type TrackerInfo = { vehicleName: string; deviceId: string; firmware: string | null };
+    const trackers: TrackerInfo[] = [];
+
+    if (vehicles.length > 0) {
+      const { createClient } = await import("@supabase/supabase-js");
+      const { default: ws } = await import("ws");
+      const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { realtime: { transport: ws } });
+      const ids = vehicles.map((v) => v.deviceAssignment!);
+      const { data } = await sb.from("telemetry_latest").select("device_id, payload").in("device_id", ids);
+      for (const v of vehicles) {
+        const row = data?.find((r) => r.device_id === v.deviceAssignment);
+        const firmware = (row?.payload as Record<string, unknown> | null)?.firmware as string | null ?? null;
+        trackers.push({ vehicleName: v.name, deviceId: v.deviceAssignment!, firmware });
+      }
+    }
+
+    const latest = await store.get("latest", { type: "json" }) as OtaMetadata | null;
+    return json({ ok: true, deployed: latest ?? null, trackers });
+  }
+
   return new Response("Not found", { status: 404 });
 };
 
@@ -96,6 +145,6 @@ function semverGt(a: string, b: string): boolean {
 }
 
 export const config: Config = {
-  path: "/api/fleet/ota/:action",
+  path: ["/api/fleet/ota/:action"],
   method: ["GET", "POST"],
 };

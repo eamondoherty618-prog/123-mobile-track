@@ -60,7 +60,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: name } },
+      options: {
+        data: { full_name: name },
+        emailRedirectTo: "https://123mobiletrack.com/login",
+      },
     });
     if (error) throw new Error(error.message);
     // If session is null, email confirmation is required

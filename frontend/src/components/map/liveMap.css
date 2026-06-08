@@ -1,0 +1,5 @@
+/* Smooth marker movement — Leaflet repositions markers by updating CSS transform.
+   The transition makes icons glide to their new position instead of jumping. */
+.leaflet-marker-icon {
+  transition: transform 0.8s linear !important;
+}

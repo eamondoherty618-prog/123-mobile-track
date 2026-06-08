@@ -119,6 +119,7 @@ export function createVehicleMapIcon(opts: {
   isOnline?: boolean;
   selected?: boolean;
   maintDue?: boolean;
+  courseDeg?: number;
 }): DivIcon {
   const {
     vehicleType,
@@ -128,7 +129,10 @@ export function createVehicleMapIcon(opts: {
     isOnline = false,
     selected = false,
     maintDue = false,
+    courseDeg,
   } = opts;
+  // SVG icons face right (east = 90°). Rotate so they point in direction of travel.
+  const rotationDeg = courseDeg != null ? courseDeg - 90 : 0;
 
   const dotColor = statusDotColor(isMoving, isOnline);
   // Fill: vehicle's own color if set; otherwise use status color
@@ -157,13 +161,13 @@ export function createVehicleMapIcon(opts: {
   }
 
   const svg = getVehicleSvg(vehicleType, fillColor);
-  // SVG is 44x22; add 10px padding around for dots + drop-shadow bleed
   const cW = 54, cH = 32;
   const selStyle = selected ? "outline:2.5px solid #15803d;outline-offset:2px;border-radius:4px;" : "";
+  const rotStyle = rotationDeg !== 0 ? `transform:rotate(${rotationDeg.toFixed(1)}deg);transform-origin:center;` : "";
 
   return divIcon({
     className: "",
-    html: `<div style="position:relative;width:${cW}px;height:${cH}px">
+    html: `<div style="position:relative;width:${cW}px;height:${cH}px;${rotStyle}">
       <div style="position:absolute;top:5px;left:5px;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.5));${selStyle}">${svg}</div>
       ${dot}${maintBadge}
     </div>`,
