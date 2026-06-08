@@ -1,21 +1,44 @@
+import { refreshAccessToken } from "./auth";
+
 const BASE = "https://123mobiletrack.com";
 
-async function get<T>(path: string, token: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { authorization: `Bearer ${token}` },
+// Callback set by the app root to update the global token after a refresh.
+let _onTokenRefreshed: ((newToken: string) => void) | null = null;
+export function setTokenRefreshCallback(cb: (newToken: string) => void) {
+  _onTokenRefreshed = cb;
+}
+
+async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
+  let res = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: { authorization: `Bearer ${token}`, ...(init?.headers ?? {}) },
   });
+
+  if (res.status === 401) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      _onTokenRefreshed?.(newToken);
+      res = await fetch(`${BASE}${path}`, {
+        ...init,
+        headers: { authorization: `Bearer ${newToken}`, ...(init?.headers ?? {}) },
+      });
+    }
+  }
+
   if (!res.ok) throw new Error(`${res.status}`);
   return res.json();
 }
 
-async function post<T>(path: string, token: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+function get<T>(path: string, token: string): Promise<T> {
+  return request<T>(path, token);
+}
+
+function post<T>(path: string, token: string, body: unknown): Promise<T> {
+  return request<T>(path, token, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${res.status}`);
-  return res.json();
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────

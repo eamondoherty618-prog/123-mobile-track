@@ -90,8 +90,8 @@ export default function AlertsScreen() {
                   <Text style={[styles.alertTitle, { color }]}>{a.title}</Text>
                 </View>
                 <Text style={styles.meta}>{a.vehicleName} · {time}</Text>
-                {a.speed_kph > 0 && (
-                  <Text style={styles.detail}>{Math.round(a.speed_kph * 0.621371)} mph</Text>
+                {(a.speed_kph ?? 0) > 0 && (
+                  <Text style={styles.detail}>{Math.round((a.speed_kph ?? 0) * 0.621371)} mph</Text>
                 )}
               </View>
             </View>

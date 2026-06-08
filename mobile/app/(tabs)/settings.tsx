@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 
-import { logout } from "../../lib/auth";
+import { deleteAccount, logout } from "../../lib/auth";
 import { getUser, setGlobalUser } from "../_layout";
 import { C } from "../../lib/colors";
 
@@ -30,6 +30,7 @@ function Row({ label, value, onPress, danger }: { label: string; value?: string;
 export default function SettingsScreen() {
   const router = useRouter();
   const user = getUser();
+  const [deleting, setDeleting] = useState(false);
 
   function handleLogout() {
     Alert.alert("Sign out", "Are you sure?", [
@@ -44,6 +45,32 @@ export default function SettingsScreen() {
         },
       },
     ]);
+  }
+
+  function handleDeleteAccount() {
+    Alert.alert(
+      "Delete account",
+      "This permanently deletes your account and all fleet data. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete account",
+          style: "destructive",
+          onPress: async () => {
+            if (!user) return;
+            setDeleting(true);
+            try {
+              await deleteAccount(user.token);
+              setGlobalUser(null);
+              router.replace("/login");
+            } catch (e) {
+              Alert.alert("Error", e instanceof Error ? e.message : "Could not delete account. Try again.");
+              setDeleting(false);
+            }
+          },
+        },
+      ],
+    );
   }
 
   return (
@@ -63,6 +90,11 @@ export default function SettingsScreen() {
         <Section title="More">
           <Row label="Open web app" value="123mobiletrack.com" />
           <Row label="Sign out" onPress={handleLogout} danger />
+          <Row
+            label={deleting ? "Deleting account…" : "Delete account"}
+            onPress={deleting ? undefined : handleDeleteAccount}
+            danger
+          />
         </Section>
 
         <Text style={styles.footer}>

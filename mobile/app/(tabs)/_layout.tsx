@@ -86,7 +86,7 @@ function TabBarSFSymbol({
   fallback,
 }: {
   name: string;
-  color: string;
+  color: string | object;
   size: number;
   fallback: string;
 }) {
@@ -100,7 +100,7 @@ function TabBarSFSymbol({
           name={name}
           style={{ width: size, height: size }}
           type="hierarchical"
-          tintColor={color}
+          tintColor={color as string}
         />
       );
     } catch {

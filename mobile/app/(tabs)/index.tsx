@@ -1,5 +1,4 @@
-import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -9,33 +8,48 @@ import {
   Text,
   View,
 } from "react-native";
-import MapView, { Marker, Callout } from "react-native-maps";
+import { useRouter } from "expo-router";
 
 import { fetchLatest, fetchWorkspace, type TrackerPacket, type Vehicle } from "../../lib/api";
 import { getUser } from "../_layout";
 import { C } from "../../lib/colors";
 
-type MarkerData = {
+type TrackerRow = {
   deviceId: string;
   vehicleName: string;
-  lat: number;
-  lon: number;
+  online: boolean;
+  live: boolean;
   speedMph: number;
-  isLive: boolean;
+  lat?: number;
+  lon?: number;
   lastTime?: string;
+  firmware?: string;
+  batteryMv?: number;
 };
 
-function isRecentReport(receivedAt: string | undefined): boolean {
+function isRecent(receivedAt: string | undefined): boolean {
   if (!receivedAt) return false;
-  return Date.now() - new Date(receivedAt).getTime() < 5 * 60 * 1000;
+  return Date.now() - new Date(receivedAt).getTime() < 35 * 60 * 1000;
 }
 
-export default function DashboardScreen() {
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function batteryPct(mv: number | undefined): string {
+  if (!mv) return "";
+  const pct = Math.max(0, Math.min(100, Math.round(((mv - 3300) / 900) * 100)));
+  return `${pct}%`;
+}
+
+export default function FleetScreen() {
   const router = useRouter();
-  const [markers, setMarkers] = useState<MarkerData[]>([]);
-  const [statusRows, setStatusRows] = useState<{ id: string; name: string; online: boolean; live: boolean; speedMph: number }[]>([]);
+  const [rows, setRows] = useState<TrackerRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const mapRef = useRef<MapView>(null);
 
   async function load() {
     const user = getUser();
@@ -48,48 +62,27 @@ export default function DashboardScreen() {
       const vehicles: Vehicle[] = ws.workspace?.vehicles ?? [];
       const packets = Object.values(latest.devices ?? {}) as TrackerPacket[];
 
-      const newMarkers: MarkerData[] = [];
-      const rows: typeof statusRows = [];
-
-      for (const t of packets) {
+      const result: TrackerRow[] = packets.map((t) => {
         const vehicle = vehicles.find((v) => v.deviceAssignment === t.device_id);
-        const name = vehicle?.name ?? t.device_id;
         const live = Boolean(t.has_fix && t.gps?.lat && t.gps?.lon);
-        const hasLast = !live && Boolean(t.last_gps?.lat && t.last_gps?.lon);
-        const online = isRecentReport(t.received_at);
         const speedMph = live ? Math.round(Number(t.gps?.speed_kph ?? 0) * 0.621371) : 0;
+        const lastGps = t.last_gps;
+        return {
+          deviceId: t.device_id,
+          vehicleName: vehicle?.name ?? t.device_id,
+          online: isRecent(t.received_at),
+          live,
+          speedMph,
+          lat: live ? Number(t.gps!.lat) : (lastGps ? Number(lastGps.lat) : undefined),
+          lon: live ? Number(t.gps!.lon) : (lastGps ? Number(lastGps.lon) : undefined),
+          lastTime: t.received_at,
+          firmware: t.firmware,
+          batteryMv: t.battery_mv,
+        };
+      });
 
-        rows.push({ id: t.device_id, name, online, live, speedMph });
-
-        if (live) {
-          newMarkers.push({
-            deviceId: t.device_id,
-            vehicleName: name,
-            lat: Number(t.gps!.lat),
-            lon: Number(t.gps!.lon),
-            speedMph,
-            isLive: true,
-          });
-        } else if (hasLast) {
-          newMarkers.push({
-            deviceId: t.device_id,
-            vehicleName: name,
-            lat: Number(t.last_gps!.lat),
-            lon: Number(t.last_gps!.lon),
-            speedMph: 0,
-            isLive: false,
-            lastTime: t.last_gps?.time,
-          });
-        }
-      }
-
-      setMarkers(newMarkers);
-      setStatusRows(rows);
-
-      if (newMarkers.length > 0 && mapRef.current) {
-        const coords = newMarkers.map((m) => ({ latitude: m.lat, longitude: m.lon }));
-        mapRef.current.fitToCoordinates(coords, { edgePadding: { top: 80, right: 40, bottom: 200, left: 40 }, animated: true });
-      }
+      result.sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
+      setRows(result);
     } catch {
       // non-fatal
     } finally {
@@ -103,93 +96,98 @@ export default function DashboardScreen() {
     return () => clearInterval(id);
   }, []);
 
+  const onlineCount = rows.filter((r) => r.online).length;
+
   return (
-    <View style={{ flex: 1, backgroundColor: C.cloud }}>
-      <MapView
-        ref={mapRef}
-        style={StyleSheet.absoluteFillObject}
-        initialRegion={{ latitude: 40.735, longitude: -74.172, latitudeDelta: 0.3, longitudeDelta: 0.3 }}
-        showsUserLocation={false}
-        showsCompass
-      >
-        {markers.map((m) => (
-          <Marker
-            key={m.deviceId}
-            coordinate={{ latitude: m.lat, longitude: m.lon }}
-            pinColor={m.isLive ? C.navy : C.slate}
-            opacity={m.isLive ? 1 : 0.5}
-          >
-            <Callout>
-              <View style={styles.callout}>
-                <Text style={styles.calloutTitle}>{m.vehicleName}</Text>
-                <Text style={styles.calloutSub}>
-                  {m.isLive
-                    ? m.speedMph > 3 ? `${m.speedMph} mph · Live GPS` : "Stopped · Live GPS"
-                    : `Last known · ${m.lastTime ? new Date(m.lastTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "unknown"}`}
-                </Text>
-              </View>
-            </Callout>
-          </Marker>
-        ))}
-      </MapView>
-
-      {/* Header */}
-      <SafeAreaView pointerEvents="box-none">
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Live Fleet</Text>
-          {loading && <ActivityIndicator size="small" color={C.forest} style={{ marginLeft: 8 }} />}
-          <Pressable style={styles.addBtn} onPress={() => router.push("/devices/add")}>
-            <Text style={styles.addBtnLabel}>+ Add device</Text>
-          </Pressable>
+    <SafeAreaView style={styles.root}>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.title}>Live Fleet</Text>
+          <Text style={styles.subtitle}>
+            {loading ? "Loading…" : `${onlineCount} of ${rows.length} online`}
+          </Text>
         </View>
-      </SafeAreaView>
+        <Pressable style={styles.addBtn} onPress={() => router.push("/devices/add")}>
+          <Text style={styles.addBtnLabel}>+ Add</Text>
+        </Pressable>
+      </View>
 
-      {/* Status strip at bottom */}
-      <View style={styles.strip} pointerEvents="none">
-        {statusRows.length === 0 ? (
-          <Text style={styles.stripEmpty}>No trackers online yet · take one outside for GPS</Text>
-        ) : (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stripScroll}>
-            {statusRows.map((row) => (
-              <View key={row.id} style={styles.stripItem}>
-                <View style={[styles.dot, row.live ? styles.dotLive : row.online ? styles.dotOnline : styles.dotOff]} />
-                <Text style={styles.stripName}>{row.name}</Text>
-                <Text style={styles.stripSub}>
-                  {row.live ? (row.speedMph > 3 ? `${row.speedMph} mph` : "stopped") : row.online ? "no fix" : "offline"}
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={C.forest} size="large" />
+        </View>
+      ) : rows.length === 0 ? (
+        <View style={styles.center}>
+          <Text style={styles.emptyTitle}>No trackers found</Text>
+          <Text style={styles.emptySub}>Add a device to start tracking your fleet.</Text>
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+          {rows.map((r) => (
+            <View key={r.deviceId} style={[styles.card, !r.online && styles.cardOffline]}>
+              <View style={styles.cardTop}>
+                <View style={[styles.dot,
+                  r.live ? styles.dotLive : r.online ? styles.dotOnline : styles.dotOff]} />
+                <Text style={styles.name}>{r.vehicleName}</Text>
+                <Text style={[styles.status,
+                  { color: r.live ? C.forest : r.online ? C.amber : "#94a3b8" }]}>
+                  {r.live
+                    ? r.speedMph > 3 ? `${r.speedMph} mph` : "Stopped"
+                    : r.online ? "Online · no GPS" : "Offline"}
                 </Text>
               </View>
-            ))}
-          </ScrollView>
-        )}
-      </View>
-    </View>
+
+              <View style={styles.cardMeta}>
+                {r.lat != null && r.lon != null && (
+                  <Text style={styles.meta}>
+                    📍 {r.lat.toFixed(5)}, {r.lon.toFixed(5)}
+                    {!r.live && " (last known)"}
+                  </Text>
+                )}
+                {r.lastTime && (
+                  <Text style={styles.meta}>🕐 {fmtTime(r.lastTime)}</Text>
+                )}
+                {r.batteryMv != null && r.batteryMv > 0 && (
+                  <Text style={styles.meta}>🔋 {batteryPct(r.batteryMv)}</Text>
+                )}
+                {r.firmware && (
+                  <Text style={styles.meta}>fw {r.firmware}</Text>
+                )}
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: C.cloud },
   header: {
-    flexDirection: "row", alignItems: "center", margin: 16,
-    backgroundColor: C.white, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12,
-    shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingVertical: 14,
   },
-  headerTitle: { flex: 1, fontSize: 17, fontWeight: "700", color: C.ink },
-  addBtn: { backgroundColor: C.forest, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
-  addBtnLabel: { color: C.white, fontSize: 13, fontWeight: "600" },
-  callout: { minWidth: 140, padding: 4 },
-  calloutTitle: { fontSize: 14, fontWeight: "700", color: C.ink },
-  calloutSub: { fontSize: 12, color: C.slate, marginTop: 2 },
-  strip: {
-    position: "absolute", bottom: 0, left: 0, right: 0,
-    backgroundColor: "rgba(255,255,255,0.95)", paddingTop: 12, paddingBottom: 32, paddingHorizontal: 16,
-    borderTopWidth: 1, borderTopColor: C.line,
+  title: { fontSize: 26, fontWeight: "800", color: C.ink },
+  subtitle: { fontSize: 13, color: C.slate, marginTop: 2 },
+  addBtn: { backgroundColor: C.forest, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  addBtnLabel: { color: C.white, fontSize: 13, fontWeight: "700" },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
+  emptyTitle: { fontSize: 17, fontWeight: "700", color: C.ink, marginBottom: 8 },
+  emptySub: { fontSize: 14, color: C.slate, textAlign: "center", lineHeight: 20 },
+  card: {
+    backgroundColor: C.white, borderRadius: 14, padding: 14,
+    shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  stripEmpty: { fontSize: 13, color: C.slate, textAlign: "center" },
-  stripScroll: { gap: 20, paddingRight: 16 },
-  stripItem: { flexDirection: "row", alignItems: "center", gap: 6 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  dotLive: { backgroundColor: C.navy },
+  cardOffline: { opacity: 0.65 },
+  cardTop: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  dotLive: { backgroundColor: C.forest },
   dotOnline: { backgroundColor: C.amber },
   dotOff: { backgroundColor: "#cbd5e1" },
-  stripName: { fontSize: 13, fontWeight: "600", color: C.ink },
-  stripSub: { fontSize: 12, color: C.slate },
+  name: { flex: 1, fontSize: 16, fontWeight: "700", color: C.ink },
+  status: { fontSize: 13, fontWeight: "600" },
+  cardMeta: { gap: 3, paddingLeft: 18 },
+  meta: { fontSize: 12, color: C.slate },
 });

@@ -2,7 +2,7 @@
   "expo": {
     "name": "123 Mobile Track",
     "slug": "mobile-track",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "scheme": "mobiletrack",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -17,7 +17,21 @@
       "bundleIdentifier": "com.123mobiletrack.app",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Used to set depot WiFi shortcut coordinates.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Used to set depot WiFi shortcut coordinates."
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Used to set depot WiFi shortcut coordinates.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.mobiletrack123.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "config": {
+        "googleMaps": {
+          "apiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+        }
       }
     },
     "web": {
@@ -29,14 +43,14 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store",
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/icon.png",
-          "color": "#1a2e1a"
-        }
-      ]
-    ]
+      "expo-secure-store"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "74ad013e-0140-4dde-9204-31bf1106ccc5"
+      }
+    },
+    "owner": "eamondoherty618"
   }
 }
