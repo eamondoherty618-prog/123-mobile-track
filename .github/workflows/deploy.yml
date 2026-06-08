@@ -23,6 +23,9 @@ jobs:
       - name: Build
         working-directory: frontend
         run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://rprqcfrjkuoxkobershb.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_b44roLELFvBgK2oU3S4uJQ__C6InxOS
 
       - name: Deploy to Netlify
         uses: netlify/actions/cli@master
