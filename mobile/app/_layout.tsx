@@ -23,8 +23,7 @@ let _setUser: ((u: AuthUser | null) => void) | null = null;
 export function getUser() { return _user; }
 export function setGlobalUser(u: AuthUser | null) { _user = u; _setUser?.(u); }
 
-// Catches JS errors so a crash shows an error message instead of a white screen.
-class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
+class RootErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
   state = { error: null };
   static getDerivedStateFromError(e: Error) { return { error: e.message }; }
   render() {
@@ -80,13 +79,13 @@ export default function RootLayout() {
   }
 
   return (
-    <ErrorBoundary>
+    <RootErrorBoundary>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="devices/add" options={{ presentation: "modal", headerShown: true, title: "Add Device", headerTintColor: C.forest }} />
       </Stack>
       <AuthRedirect user={user} />
-    </ErrorBoundary>
+    </RootErrorBoundary>
   );
 }
