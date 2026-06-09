@@ -1,0 +1,15 @@
+diff --git a/node_modules/expo-router/build/renderRootComponent.js b/node_modules/expo-router/build/renderRootComponent.js
+index 519b57d..28414b4 100644
+--- a/node_modules/expo-router/build/renderRootComponent.js
++++ b/node_modules/expo-router/build/renderRootComponent.js
+@@ -98,7 +98,9 @@ function renderRootComponent(Component) {
+         //  ERROR  Invariant Violation: "main" has not been registered. This can happen if:
+         // * Metro (the local dev server) is run from the wrong folder. Check if Metro is running, stop it and restart it in the current project.
+         // * A module failed to load due to an error and `AppRegistry.registerComponent` wasn't called.
+-        (0, expo_1.registerRootComponent)(() => (0, jsx_runtime_1.jsx)(react_native_1.View, {}));
++        const _errMsg = (error && error.message) ? error.message : String(error);
++        const _errStack = (error && error.stack) ? String(error.stack).slice(0, 600) : '';
++        (0, expo_1.registerRootComponent)(() => (0, jsx_runtime_1.jsx)(react_native_1.View, { style: { flex: 1, backgroundColor: '#8b0000', padding: 32, paddingTop: 80 } }, (0, jsx_runtime_1.jsx)(react_native_1.Text, { style: { color: '#fff', fontSize: 15, fontWeight: 'bold', marginBottom: 8 } }, 'Startup Error'), (0, jsx_runtime_1.jsx)(react_native_1.Text, { style: { color: '#ffcccc', fontSize: 12 } }, _errMsg), (0, jsx_runtime_1.jsx)(react_native_1.Text, { style: { color: '#ffaaaa', fontSize: 10, marginTop: 8 } }, _errStack)));
+         // Console is pretty useless on native, on web you get interactive stack traces.
+         if (process.env.EXPO_OS === 'web') {
+             console.error(error);
