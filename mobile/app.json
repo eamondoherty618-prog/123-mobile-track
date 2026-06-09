@@ -44,8 +44,7 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store",
-      "expo-dev-client"
+      "expo-secure-store"
     ],
     "extra": {
       "router": {},
