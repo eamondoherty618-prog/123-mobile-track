@@ -67,13 +67,15 @@ export default function RootLayout() {
     getStoredAuth().then((auth) => {
       _user = auth;
       setUser(auth);
+    }).catch(() => {
+      setUser(null);
     });
   }, []);
 
   if (user === undefined) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: C.cloud }}>
-        <ActivityIndicator color={C.forest} />
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: C.forest }}>
+        <ActivityIndicator color={C.white} />
       </View>
     );
   }
