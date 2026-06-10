@@ -13,6 +13,7 @@ class AppDelegate: ExpoAppDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+    NSLog("AppDelegate: start")
     let delegate = ReactNativeDelegate()
     let factory = ExpoReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()
@@ -21,15 +22,22 @@ class AppDelegate: ExpoAppDelegate {
     reactNativeFactory = factory
 
 #if os(iOS) || os(tvOS)
+    NSLog("AppDelegate: creating window")
     window = UIWindow(frame: UIScreen.main.bounds)
+    NSLog("AppDelegate: calling startReactNative")
     factory.startReactNative(
       withModuleName: "main",
       in: window,
       launchOptions: launchOptions)
+    NSLog("AppDelegate: startReactNative done, rootVC=\(String(describing: window?.rootViewController))")
     window?.makeKeyAndVisible()
+    NSLog("AppDelegate: makeKeyAndVisible done")
 #endif
 
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    NSLog("AppDelegate: calling super")
+    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    NSLog("AppDelegate: super returned \(result)")
+    return result
   }
 
   // Linking API
@@ -53,18 +61,18 @@ class AppDelegate: ExpoAppDelegate {
 }
 
 class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {
-  // Extension point for config-plugins
-
   override func sourceURL(for bridge: RCTBridge) -> URL? {
-    // needed to return the correct URL for expo-dev-client.
-    bridge.bundleURL ?? bundleURL()
+    NSLog("ReactNativeDelegate: sourceURL called")
+    return bridge.bundleURL ?? bundleURL()
   }
 
   override func bundleURL() -> URL? {
 #if DEBUG
     return RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: ".expo/.virtual-metro-entry")
 #else
-    return Bundle.main.url(forResource: "main", withExtension: "jsbundle")
+    let url = Bundle.main.url(forResource: "main", withExtension: "jsbundle")
+    NSLog("ReactNativeDelegate: bundleURL=\(String(describing: url))")
+    return url
 #endif
   }
 }
