@@ -5,42 +5,33 @@ import ReactAppDependencyProvider
 @main
 class AppDelegate: ExpoAppDelegate {
   var window: UIWindow?
-
-  var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
-  var reactNativeFactory: RCTReactNativeFactory?
+  private var _bridge: RCTBridge?
 
   public override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
-    NSLog("AppDelegate: start")
-    let delegate = ReactNativeDelegate()
-    let factory = ExpoReactNativeFactory(delegate: delegate)
-    delegate.dependencyProvider = RCTAppDependencyProvider()
+    // iOS 26 workaround: ExpoReactNativeFactory uses RCTHost which never calls
+    // host:didInitializeRuntime: on iOS 26, preventing the JS runtime from starting.
+    // Use RCTBridge directly (legacy bridge) which works on all iOS versions.
+    let bridgeDelegate = LegacyBridgeDelegate()
+    _bridge = RCTBridge(delegate: bridgeDelegate, launchOptions: launchOptions)
 
-    reactNativeDelegate = delegate
-    reactNativeFactory = factory
+    if let bridge = _bridge {
+      let rootView = RCTRootView(bridge: bridge, moduleName: "main", initialProperties: nil)
+      rootView.backgroundColor = UIColor(red: 0.1, green: 0.18, blue: 0.1, alpha: 1)
 
-#if os(iOS) || os(tvOS)
-    NSLog("AppDelegate: creating window")
-    window = UIWindow(frame: UIScreen.main.bounds)
-    NSLog("AppDelegate: calling startReactNative")
-    factory.startReactNative(
-      withModuleName: "main",
-      in: window,
-      launchOptions: launchOptions)
-    NSLog("AppDelegate: startReactNative done, rootVC=\(String(describing: window?.rootViewController))")
-    window?.makeKeyAndVisible()
-    NSLog("AppDelegate: makeKeyAndVisible done")
-#endif
+      let rootVC = UIViewController()
+      rootVC.view = rootView
 
-    NSLog("AppDelegate: calling super")
-    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
-    NSLog("AppDelegate: super returned \(result)")
-    return result
+      window = UIWindow(frame: UIScreen.main.bounds)
+      window?.rootViewController = rootVC
+      window?.makeKeyAndVisible()
+    }
+
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  // Linking API
   public override func application(
     _ app: UIApplication,
     open url: URL,
@@ -49,7 +40,6 @@ class AppDelegate: ExpoAppDelegate {
     return super.application(app, open: url, options: options) || RCTLinkingManager.application(app, open: url, options: options)
   }
 
-  // Universal Links
   public override func application(
     _ application: UIApplication,
     continue userActivity: NSUserActivity,
@@ -60,19 +50,12 @@ class AppDelegate: ExpoAppDelegate {
   }
 }
 
-class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {
-  override func sourceURL(for bridge: RCTBridge) -> URL? {
-    NSLog("ReactNativeDelegate: sourceURL called")
-    return bridge.bundleURL ?? bundleURL()
-  }
-
-  override func bundleURL() -> URL? {
+private class LegacyBridgeDelegate: NSObject, RCTBridgeDelegate {
+  func sourceURL(for bridge: RCTBridge!) -> URL? {
 #if DEBUG
     return RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: ".expo/.virtual-metro-entry")
 #else
-    let url = Bundle.main.url(forResource: "main", withExtension: "jsbundle")
-    NSLog("ReactNativeDelegate: bundleURL=\(String(describing: url))")
-    return url
+    return Bundle.main.url(forResource: "main", withExtension: "jsbundle")
 #endif
   }
 }
