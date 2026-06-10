@@ -1,4 +1,5 @@
-ENV['RNS_GAMMA_ENABLED'] ||= '0'
+ENV['RNS_GAMMA_ENABLED'] = '0'
+ENV['RCT_NEW_ARCH_ENABLED'] = '0'
 require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")
 require File.join(File.dirname(`node --print "require.resolve('react-native/package.json')"`), "scripts/react_native_pods")
 
@@ -49,7 +50,6 @@ target '123MobileTrack' do
   use_react_native!(
     :path => config[:reactNativePath],
     :hermes_enabled => podfile_properties['expo.jsEngine'] == nil || podfile_properties['expo.jsEngine'] == 'hermes',
-    :new_arch_enabled => false,
     # An absolute path to your application root.
     :app_path => "#{Pod::Config.instance.installation_root}/..",
     :privacy_file_aggregation_enabled => podfile_properties['apple.privacyManifestAggregationEnabled'] != 'false',
@@ -61,7 +61,6 @@ target '123MobileTrack' do
       config[:reactNativePath],
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
-      :new_arch_enabled => false,
     )
   end
 end
