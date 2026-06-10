@@ -5,29 +5,28 @@ import ReactAppDependencyProvider
 @main
 class AppDelegate: ExpoAppDelegate {
   var window: UIWindow?
-  private var _bridge: RCTBridge?
+  var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
+  var reactNativeFactory: RCTReactNativeFactory?
 
   public override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
-    // iOS 26 workaround: ExpoReactNativeFactory uses RCTHost which never calls
-    // host:didInitializeRuntime: on iOS 26, preventing the JS runtime from starting.
-    // Use RCTBridge directly (legacy bridge) which works on all iOS versions.
-    let bridgeDelegate = LegacyBridgeDelegate()
-    _bridge = RCTBridge(delegate: bridgeDelegate, launchOptions: launchOptions)
+    let delegate = ReactNativeDelegate()
+    let factory = ExpoReactNativeFactory(delegate: delegate)
+    delegate.dependencyProvider = RCTAppDependencyProvider()
 
-    if let bridge = _bridge {
-      let rootView = RCTRootView(bridge: bridge, moduleName: "main", initialProperties: nil)
-      rootView.backgroundColor = UIColor(red: 0.1, green: 0.18, blue: 0.1, alpha: 1)
+    reactNativeDelegate = delegate
+    reactNativeFactory = factory
 
-      let rootVC = UIViewController()
-      rootVC.view = rootView
-
-      window = UIWindow(frame: UIScreen.main.bounds)
-      window?.rootViewController = rootVC
-      window?.makeKeyAndVisible()
-    }
+#if os(iOS) || os(tvOS)
+    window = UIWindow(frame: UIScreen.main.bounds)
+    factory.startReactNative(
+      withModuleName: "main",
+      in: window,
+      launchOptions: launchOptions)
+    window?.makeKeyAndVisible()
+#endif
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
@@ -50,8 +49,19 @@ class AppDelegate: ExpoAppDelegate {
   }
 }
 
-private class LegacyBridgeDelegate: NSObject, RCTBridgeDelegate {
-  func sourceURL(for bridge: RCTBridge!) -> URL? {
+class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {
+
+  override func host(_ host: RCTHost, didInitializeRuntime runtime: RCTRuntime) {
+    NSLog("DELEGATE: hostDidInitializeRuntime CALLED on iOS \(UIDevice.current.systemVersion)")
+    super.host(host, didInitializeRuntime: runtime)
+    NSLog("DELEGATE: super.hostDidInitializeRuntime DONE")
+  }
+
+  override func sourceURL(for bridge: RCTBridge) -> URL? {
+    return bridge.bundleURL ?? bundleURL()
+  }
+
+  override func bundleURL() -> URL? {
 #if DEBUG
     return RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: ".expo/.virtual-metro-entry")
 #else
