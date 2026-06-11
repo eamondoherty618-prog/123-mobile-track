@@ -50,13 +50,6 @@ class AppDelegate: ExpoAppDelegate {
 }
 
 class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {
-
-  override func host(_ host: RCTHost, didInitializeRuntime runtime: RCTRuntime) {
-    NSLog("DELEGATE: hostDidInitializeRuntime CALLED on iOS \(UIDevice.current.systemVersion)")
-    super.host(host, didInitializeRuntime: runtime)
-    NSLog("DELEGATE: super.hostDidInitializeRuntime DONE")
-  }
-
   override func sourceURL(for bridge: RCTBridge) -> URL? {
     return bridge.bundleURL ?? bundleURL()
   }
