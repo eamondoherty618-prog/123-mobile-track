@@ -1,4 +1,6 @@
 import type { Config, Context } from "@netlify/functions";
+import { createClient } from "@supabase/supabase-js";
+import ws from "ws";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -20,37 +22,59 @@ function getUserInfo(req: Request): { userId: string; email: string } | null {
   }
 }
 
-export default async (req: Request, context: Context) => {
+function supabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { realtime: { transport: ws } },
+  );
+}
+
+// Mobile and web now share one workspace: Supabase organizations.workspace_blob.
+// (Previously this endpoint used Netlify Blobs, a separate store the web app
+// never wrote to, so the mobile app saw no vehicles.)
+export default async (req: Request, _context: Context) => {
   const userInfo = getUserInfo(req);
   if (!userInfo) return json({ ok: false, error: "unauthorized" }, 401);
 
-  const { getStore } = await import("@netlify/blobs");
-  const store = getStore({ name: "fleet-workspaces", consistency: "strong" });
+  const db = supabase();
 
-  // If this user is a member of another org, use that org's workspace instead.
-  let key = `workspace/${userInfo.userId}`;
-  if (userInfo.email) {
-    const membership = await store.get(`member/${userInfo.email}`, { type: "json" }) as { orgOwner: string } | null;
-    if (membership?.orgOwner) key = `workspace/${membership.orgOwner}`;
-  }
+  // Resolve the user's org — oldest membership, consistent with latest.ts / team.ts.
+  const { data: members } = await db
+    .from("organization_members")
+    .select("org_id")
+    .eq("user_id", userInfo.userId)
+    .order("created_at", { ascending: true })
+    .limit(1);
+  const orgId = members?.[0]?.org_id ?? null;
+  if (!orgId) return json({ ok: true, workspace: null });
 
   if (req.method === "GET") {
-    const data = await store.get(key, { type: "json" });
-    return json({ ok: true, workspace: data ?? null });
+    const { data: org } = await db
+      .from("organizations")
+      .select("workspace_blob")
+      .eq("id", orgId)
+      .maybeSingle();
+    return json({ ok: true, workspace: org?.workspace_blob ?? null });
   }
 
   if (req.method === "POST") {
     try {
       const body = await req.json() as Record<string, unknown>;
-      const existing = await store.get(key, { type: "json" }) as Record<string, unknown> | null;
+
+      const { data: org } = await db
+        .from("organizations")
+        .select("workspace_blob")
+        .eq("id", orgId)
+        .maybeSingle();
+      const existing = (org?.workspace_blob as Record<string, unknown> | null) ?? null;
 
       if (existing) {
         const serverSavedAt = (existing._savedAt as number) ?? 0;
         const clientSavedAt = (body._savedAt as number) ?? 0;
-
         if (serverSavedAt > clientSavedAt) {
-          // Server is newer — client has stale data. Preserve server's device assignments
-          // so a stale write from an old tab/device never wipes tracker assignments.
+          // Server is newer — preserve its device assignments so a stale write
+          // from an old tab/device never wipes tracker assignments.
           const serverVehicles = (existing.vehicles as Array<{ id: string; deviceAssignment?: string }>) ?? [];
           const serverAssignments = new Map(serverVehicles.map((v) => [v.id, v.deviceAssignment]));
           body.vehicles = ((body.vehicles as Array<{ id: string; deviceAssignment?: string }>) ?? []).map((v) => ({
@@ -60,7 +84,10 @@ export default async (req: Request, context: Context) => {
         }
       }
 
-      await store.setJSON(key, body);
+      await db
+        .from("organizations")
+        .update({ workspace_blob: body, updated_at: new Date().toISOString() })
+        .eq("id", orgId);
       return json({ ok: true });
     } catch {
       return json({ ok: false, error: "invalid body" }, 400);
