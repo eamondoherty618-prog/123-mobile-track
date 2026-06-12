@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Download, Share2, Smartphone, X } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
+import { isNativeApp } from "@/lib/nativeApp";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -51,6 +52,7 @@ export function PwaInstallPrompt() {
   }, []);
 
   const mode = useMemo(() => {
+    if (isNativeApp()) return "hidden"; // already a native app — no install prompt
     if (installed || dismissed) return "hidden";
     if (deferredPrompt) return "install";
     if (isIos() && !isStandalone()) return "ios";

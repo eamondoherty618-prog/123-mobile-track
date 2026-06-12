@@ -5,7 +5,6 @@ import {
   ActivityIndicator,
   BackHandler,
   Platform,
-  RefreshControl,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -17,13 +16,35 @@ import { WebView } from "react-native-webview";
 const SITE_URL = "https://123mobiletrack.com";
 const BRAND = "#1a2e1a";
 
+// Runs before the page loads: lock the viewport to phone scale (no pinch-zoom /
+// drifting), flag the native app so the site can hide web-only UI, and add
+// app-like touch behavior (no text selection, no long-press callout, no bounce).
+const BEFORE_LOAD_JS = `
+(function() {
+  window.isNativeApp = true;
+  function lockViewport() {
+    var m = document.querySelector('meta[name=viewport]');
+    if (!m) { m = document.createElement('meta'); m.name = 'viewport'; document.head.appendChild(m); }
+    m.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover');
+  }
+  function addAppCss() {
+    var s = document.createElement('style');
+    s.textContent = '*{ -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; } html,body{ overscroll-behavior:none; -webkit-text-size-adjust:100%; } input,textarea,[contenteditable]{ -webkit-user-select:text; user-select:text; }';
+    (document.head || document.documentElement).appendChild(s);
+  }
+  lockViewport();
+  if (document.head) addAppCss();
+  else document.addEventListener('DOMContentLoaded', addAppCss);
+})();
+true;
+`;
+
 function App() {
   const webRef = React.useRef(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(false);
   const [canGoBack, setCanGoBack] = React.useState(false);
 
-  // Android hardware back navigates the WebView instead of closing the app.
   React.useEffect(() => {
     if (Platform.OS !== "android") return;
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -61,12 +82,18 @@ function App() {
               source={{ uri: SITE_URL }}
               style={styles.web}
               originWhitelist={["*"]}
+              applicationNameForUserAgent="123MobileTrackApp/1.0"
+              injectedJavaScriptBeforeContentLoaded={BEFORE_LOAD_JS}
               javaScriptEnabled
               domStorageEnabled
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               allowsBackForwardNavigationGestures
-              pullToRefreshEnabled
+              scalesPageToFit={false}
+              bounces={false}
+              overScrollMode="never"
+              automaticallyAdjustContentInsets={false}
+              contentInsetAdjustmentBehavior="never"
               setSupportMultipleWindows={false}
               onLoadStart={() => setLoading(true)}
               onLoadEnd={() => setLoading(false)}

@@ -8,6 +8,7 @@ import { SetupWorkspaceModal } from "@/components/forms/SetupWorkspaceModal";
 import { Button } from "@/components/ui/Button";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { useAuth, getStoredToken } from "@/lib/auth";
+import { isNativeApp } from "@/lib/nativeApp";
 import { canManageAdmins } from "@/lib/permissions";
 import { serviceAreaOptions, useWorkspace, WifiShortcut } from "@/lib/workspace";
 
@@ -543,7 +544,9 @@ export default function SettingsPage() {
               <div>
                 <p className="text-sm font-semibold text-brand-ink">Push notifications</p>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  {pushStatus === "granted"
+                  {isNativeApp()
+                    ? "Handled by the 123 Mobile Track app on this phone."
+                    : pushStatus === "granted"
                     ? "Alerts enabled for this device."
                     : pushStatus === "denied"
                     ? "Blocked — check browser settings."
@@ -552,7 +555,7 @@ export default function SettingsPage() {
                     : "Get alerted on this device when events fire."}
                 </p>
               </div>
-              {pushStatus === "granted" ? (
+              {isNativeApp() ? null : pushStatus === "granted" ? (
                 <button onClick={handleDisablePush} disabled={pushLoading} className="flex items-center gap-1.5 rounded-md border border-brand-line px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-brand-cloud disabled:opacity-50">
                   {pushLoading ? "…" : "Disable"}
                 </button>
